@@ -1,9 +1,12 @@
 package com.venicelauncher.app;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Environment;
 import android.util.Log;
+
+import androidx.documentfile.provider.DocumentFile;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -21,9 +24,12 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -33,14 +39,80 @@ public class BackupManager {
     private static final String TAG = "VeniceBackupManager";
     public static final int CURRENT_BACKUP_SCHEMA_VERSION = 3;
 
-    private static final String LATEST_BACKUP_ZIP = "venice_backup_latest.zip";
-    private static final String LATEST_BACKUP_JSON = "venice_backup_latest.json";
+    public static final String LATEST_BACKUP_ZIP = "venice_backup_latest.zip";
+    public static final String LATEST_BACKUP_JSON = "venice_backup_latest.json";
     private static final int MAX_ROTATED_BACKUPS = 5;
 
+    private static final String PREF_BACKUP = "venice_backup_prefs";
+    private static final String KEY_AUTO_BACKUP_TREE_URI = "auto_backup_folder_uri";
+    private static final String KEY_AUTO_BACKUP_DISPLAY_NAME = "auto_backup_folder_name";
+    private static final String KEY_LAST_AUTO_BACKUP_TIME = "last_auto_backup_time";
+
     private final Context context;
+    private final SharedPreferences backupPrefs;
 
     public BackupManager(Context context) {
         this.context = context.getApplicationContext();
+        this.backupPrefs = this.context.getSharedPreferences(PREF_BACKUP, Context.MODE_PRIVATE);
+    }
+
+    public Uri getCustomBackupTreeUri() {
+        String uriStr = backupPrefs.getString(KEY_AUTO_BACKUP_TREE_URI, null);
+        if (uriStr != null) {
+            try {
+                return Uri.parse(uriStr);
+            } catch (Exception e) {
+                Log.w(TAG, "Invalid custom backup URI stored: " + uriStr);
+            }
+        }
+        return null;
+    }
+
+    public void setCustomBackupTreeUri(Uri uri, String displayName) {
+        if (uri != null) {
+            backupPrefs.edit()
+                    .putString(KEY_AUTO_BACKUP_TREE_URI, uri.toString())
+                    .putString(KEY_AUTO_BACKUP_DISPLAY_NAME, displayName != null ? displayName : formatTreeUriToDisplayPath(uri))
+                    .apply();
+        } else {
+            backupPrefs.edit()
+                    .remove(KEY_AUTO_BACKUP_TREE_URI)
+                    .remove(KEY_AUTO_BACKUP_DISPLAY_NAME)
+                    .apply();
+        }
+    }
+
+    public String getFormattedAutoBackupLocation() {
+        String customName = backupPrefs.getString(KEY_AUTO_BACKUP_DISPLAY_NAME, null);
+        if (customName != null && !customName.isEmpty()) {
+            return customName;
+        }
+        Uri customUri = getCustomBackupTreeUri();
+        if (customUri != null) {
+            return formatTreeUriToDisplayPath(customUri);
+        }
+        return "Documents/VeniceAI_Backups (Default)";
+    }
+
+    public static String formatTreeUriToDisplayPath(Uri uri) {
+        if (uri == null) return "Documents/VeniceAI_Backups (Default)";
+        String path = uri.getPath();
+        if (path == null) return uri.toString();
+        if (path.contains(":")) {
+            String[] parts = path.split(":");
+            if (parts.length > 1) {
+                return parts[1];
+            }
+        }
+        return path;
+    }
+
+    public long getLastAutoBackupTimestamp() {
+        return backupPrefs.getLong(KEY_LAST_AUTO_BACKUP_TIME, 0);
+    }
+
+    private void setLastAutoBackupTimestamp(long time) {
+        backupPrefs.edit().putLong(KEY_LAST_AUTO_BACKUP_TIME, time).apply();
     }
 
     public File getPrimaryBackupDirectory() {
@@ -143,7 +215,8 @@ public class BackupManager {
     }
 
     /**
-     * Performs automatic backup as a full ZIP file to both internal storage and public Documents.
+     * Performs automatic backup as a full ZIP archive whenever profiles, cookies, or storage change.
+     * Backs up to the user-selected custom folder (SAF) as well as internal/Documents storage.
      */
     public synchronized boolean performAutoBackup(String accountsJson, String activeAccountId) {
         if (accountsJson == null || accountsJson.trim().isEmpty() || accountsJson.equals("[]")) {
@@ -153,7 +226,46 @@ public class BackupManager {
         String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
         boolean success = false;
 
-        // 1. Primary app backup folder
+        // 1. User-configured SAF directory (takes highest priority)
+        Uri customTreeUri = getCustomBackupTreeUri();
+        if (customTreeUri != null) {
+            try {
+                DocumentFile treeDir = DocumentFile.fromTreeUri(context, customTreeUri);
+                if (treeDir != null && treeDir.exists() && treeDir.canWrite()) {
+                    // Overwrite venice_backup_latest.zip
+                    DocumentFile latestDoc = treeDir.findFile(LATEST_BACKUP_ZIP);
+                    if (latestDoc != null && latestDoc.exists()) {
+                        latestDoc.delete();
+                    }
+                    latestDoc = treeDir.createFile("application/zip", LATEST_BACKUP_ZIP);
+                    if (latestDoc != null) {
+                        try (OutputStream os = context.getContentResolver().openOutputStream(latestDoc.getUri(), "wt")) {
+                            if (os != null && createZipBackup(accountsJson, activeAccountId, os)) {
+                                success = true;
+                                Log.d(TAG, "Auto-backup latest written to custom folder: " + latestDoc.getUri());
+                            }
+                        }
+                    }
+
+                    // Timestamped archive: venice_backup_YYYYMMDD_HHMMSS.zip
+                    String tsName = "venice_backup_" + timeStamp + ".zip";
+                    DocumentFile tsDoc = treeDir.createFile("application/zip", tsName);
+                    if (tsDoc != null) {
+                        try (OutputStream os = context.getContentResolver().openOutputStream(tsDoc.getUri(), "wt")) {
+                            if (os != null) {
+                                createZipBackup(accountsJson, activeAccountId, os);
+                            }
+                        }
+                    }
+
+                    rotateSafBackups(treeDir, ".zip");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Failed auto-backup to custom SAF directory", e);
+            }
+        }
+
+        // 2. Primary app internal backup folder
         File primaryDir = getPrimaryBackupDirectory();
         if (primaryDir != null && primaryDir.exists()) {
             File latestZip = new File(primaryDir, LATEST_BACKUP_ZIP);
@@ -166,7 +278,7 @@ public class BackupManager {
             }
         }
 
-        // 2. Public Documents/VeniceAI_Backups folder
+        // 3. Public Documents/VeniceAI_Backups folder fallback
         try {
             File publicDir = getPublicDocumentsBackupDirectory();
             if (publicDir != null && publicDir.exists()) {
@@ -180,7 +292,34 @@ public class BackupManager {
             Log.w(TAG, "Failed auto-backup to public Documents: " + e.getMessage());
         }
 
+        if (success) {
+            setLastAutoBackupTimestamp(System.currentTimeMillis());
+            Log.i(TAG, "Auto-backup successfully completed to: " + getFormattedAutoBackupLocation());
+        }
+
         return success;
+    }
+
+    private void rotateSafBackups(DocumentFile dir, String extension) {
+        try {
+            DocumentFile[] files = dir.listFiles();
+            List<DocumentFile> backups = new ArrayList<>();
+            for (DocumentFile f : files) {
+                String name = f.getName();
+                if (name != null && name.startsWith("venice_backup_20") && name.endsWith(extension)) {
+                    backups.add(f);
+                }
+            }
+            if (backups.size() > MAX_ROTATED_BACKUPS) {
+                Collections.sort(backups, Comparator.comparingLong(DocumentFile::lastModified));
+                int toDelete = backups.size() - MAX_ROTATED_BACKUPS;
+                for (int i = 0; i < toDelete; i++) {
+                    backups.get(i).delete();
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Error rotating SAF backups", e);
+        }
     }
 
     private boolean writeZipToFileAtomically(File targetFile, String accountsJson, String activeAccountId) {
@@ -325,7 +464,26 @@ public class BackupManager {
     }
 
     public BackupData getLatestExistingBackup() {
-        // Try ZIP first
+        // 1. Try custom SAF folder if set
+        Uri customTreeUri = getCustomBackupTreeUri();
+        if (customTreeUri != null) {
+            try {
+                DocumentFile treeDir = DocumentFile.fromTreeUri(context, customTreeUri);
+                if (treeDir != null && treeDir.exists()) {
+                    DocumentFile latestDoc = treeDir.findFile(LATEST_BACKUP_ZIP);
+                    if (latestDoc != null && latestDoc.exists() && latestDoc.length() > 50) {
+                        try (InputStream is = context.getContentResolver().openInputStream(latestDoc.getUri())) {
+                            if (is != null) {
+                                BackupData d = readBackupFromZip(is);
+                                if (d != null) return d;
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // 2. Try primary app directory
         File primaryDir = getPrimaryBackupDirectory();
         File latestZip = new File(primaryDir, LATEST_BACKUP_ZIP);
         if (latestZip.exists() && latestZip.length() > 50) {
@@ -335,6 +493,7 @@ public class BackupManager {
             } catch (Exception ignored) {}
         }
 
+        // 3. Try public Documents folder
         File publicDir = getPublicDocumentsBackupDirectory();
         File pubLatestZip = new File(publicDir, LATEST_BACKUP_ZIP);
         if (pubLatestZip.exists() && pubLatestZip.length() > 50) {
@@ -344,7 +503,7 @@ public class BackupManager {
             } catch (Exception ignored) {}
         }
 
-        // Fallback: legacy JSON
+        // 4. Fallback: legacy JSON
         File latestJson = new File(primaryDir, LATEST_BACKUP_JSON);
         if (latestJson.exists() && latestJson.length() > 10) {
             return readBackupFromFile(latestJson);

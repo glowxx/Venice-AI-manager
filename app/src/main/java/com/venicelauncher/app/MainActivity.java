@@ -53,6 +53,7 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.materialswitch.MaterialSwitch;
 
 import java.io.OutputStream;
 import java.text.SimpleDateFormat;
@@ -78,6 +79,8 @@ public class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<String> notificationPermissionLauncher;
     private ActivityResultLauncher<String> exportBackupLauncher;
     private ActivityResultLauncher<String[]> importBackupLauncher;
+    private ActivityResultLauncher<Uri> chooseBackupFolderLauncher;
+    private BottomSheetDialog activeSettingsDialog;
 
     private boolean isGenerating = false;
     private final Handler heartbeatHandler = new Handler(Looper.getMainLooper());
@@ -107,10 +110,7 @@ public class MainActivity extends AppCompatActivity {
         setupWebView();
         setupFloatingMenu();
 
-        // Check if always keep-alive is explicitly active
-        if (isAlwaysKeepAliveEnabled()) {
-            startBackgroundService(BackgroundKeepAliveService.ACTION_START_KEEPALIVE);
-        }
+        // Keep-alive only runs while active generation occurs - never on idle launch
 
         // Load Venice AI Chat
         loadVenice();
@@ -221,6 +221,44 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
         );
+
+        // Choose custom auto-backup folder (SAF OpenDocumentTree)
+        chooseBackupFolderLauncher = registerForActivityResult(
+                new ActivityResultContracts.OpenDocumentTree(),
+                new ActivityResultCallback<Uri>() {
+                    @Override
+                    public void onActivityResult(Uri treeUri) {
+                        if (treeUri != null) {
+                            try {
+                                final int takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+                                getContentResolver().takePersistableUriPermission(treeUri, takeFlags);
+
+                                String displayPath = BackupManager.formatTreeUriToDisplayPath(treeUri);
+                                accountManager.getBackupManager().setCustomBackupTreeUri(treeUri, displayPath);
+
+                                Toast.makeText(MainActivity.this, R.string.toast_folder_selected, Toast.LENGTH_SHORT).show();
+
+                                // Trigger immediate auto-backup to verify destination
+                                accountManager.triggerAutoBackup();
+
+                                if (activeSettingsDialog != null && activeSettingsDialog.isShowing()) {
+                                    TextView tvFolder = activeSettingsDialog.findViewById(R.id.tv_auto_backup_folder);
+                                    if (tvFolder != null) {
+                                        tvFolder.setText(displayPath);
+                                    }
+                                    TextView tvLast = activeSettingsDialog.findViewById(R.id.tv_last_backup_time);
+                                    if (tvLast != null) {
+                                        tvLast.setText(getString(R.string.backup_last_time_prefix) + "Just now");
+                                    }
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "Failed taking persistable URI permission", e);
+                                Toast.makeText(MainActivity.this, "Error setting folder: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                            }
+                        }
+                    }
+                }
+        );
     }
 
     private void setupFloatingMenu() {
@@ -323,7 +361,7 @@ public class MainActivity extends AppCompatActivity {
         ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
 
         // Modern Mobile Chrome user agent
-        String customUA = ws.getUserAgentString() + " VeniceLauncher/1.0.4 Mobile";
+        String customUA = ws.getUserAgentString() + " VeniceLauncher/1.0.5 Mobile";
         ws.setUserAgentString(customUA);
 
         // Enable cookies
@@ -461,8 +499,8 @@ public class MainActivity extends AppCompatActivity {
         webView.loadUrl(VENICE_CHAT_URL);
     }
 
-    private boolean isAlwaysKeepAliveEnabled() {
-        return settingsPrefs.getBoolean("always_keep_alive", false);
+    private boolean isKeepAliveEnabled() {
+        return settingsPrefs.getBoolean("always_keep_alive", true);
     }
 
     private void startBackgroundService(String action) {
@@ -479,115 +517,161 @@ public class MainActivity extends AppCompatActivity {
         final BottomSheetDialog dialog = new BottomSheetDialog(this, R.style.VeniceBottomSheetDialogTheme);
         View dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_settings, null);
         dialog.setContentView(dialogView);
+        activeSettingsDialog = dialog;
 
         // Active Account Display
         TextView tvActiveAccName = dialogView.findViewById(R.id.tv_active_account_name);
         AccountManager.AccountProfile active = accountManager.getActiveAccount();
-        if (active != null) {
+        if (active != null && tvActiveAccName != null) {
             tvActiveAccName.setText(active.name);
         }
 
         // Manage Accounts Button
-        dialogView.findViewById(R.id.btn_manage_accounts).setOnClickListener(v -> {
-            dialog.dismiss();
-            showAccountsDialog();
-        });
+        View btnManage = dialogView.findViewById(R.id.btn_manage_accounts);
+        if (btnManage != null) {
+            btnManage.setOnClickListener(v -> {
+                dialog.dismiss();
+                showAccountsDialog();
+            });
+        }
 
-        // Quick Add Account Button
-        dialogView.findViewById(R.id.btn_quick_add_account).setOnClickListener(v -> {
-            dialog.dismiss();
-            showAddAccountDialog();
-        });
-
-        // Background Keep-Alive Switch (Anti-Freeze)
-        SwitchCompat swKeepAlive = dialogView.findViewById(R.id.switch_keep_alive);
-        swKeepAlive.setChecked(settingsPrefs.getBoolean("always_keep_alive", false));
-        swKeepAlive.setOnCheckedChangeListener((btn, isChecked) -> {
-            settingsPrefs.edit().putBoolean("always_keep_alive", isChecked).apply();
-            if (isChecked) {
-                startBackgroundService(BackgroundKeepAliveService.ACTION_START_KEEPALIVE);
-                Toast.makeText(MainActivity.this, R.string.toast_bg_enabled, Toast.LENGTH_SHORT).show();
-            } else {
-                if (!isGenerating) {
-                    startBackgroundService(BackgroundKeepAliveService.ACTION_STOP_KEEPALIVE);
-                }
-                Toast.makeText(MainActivity.this, R.string.toast_bg_disabled, Toast.LENGTH_SHORT).show();
-            }
-        });
-
-        // Export Backup Button (ZIP archive with cookies and localStorage)
-        dialogView.findViewById(R.id.btn_export_backup).setOnClickListener(v -> {
-            accountManager.snapshotAndSaveCurrentSession(webView, new Runnable() {
-                @Override
-                public void run() {
-                    accountManager.getBackupManager().performAutoBackup(
-                            accountManager.getAccountsJson(),
-                            accountManager.getActiveAccount().id
-                    );
-                    String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-                    exportBackupLauncher.launch("venice_backup_" + timeStamp + ".zip");
+        // Background Keep-Alive Switch (ONLY active while AI is generating!)
+        MaterialSwitch swKeepAlive = dialogView.findViewById(R.id.switch_always_keep_alive);
+        if (swKeepAlive != null) {
+            swKeepAlive.setChecked(settingsPrefs.getBoolean("always_keep_alive", true));
+            swKeepAlive.setOnCheckedChangeListener((btn, isChecked) -> {
+                settingsPrefs.edit().putBoolean("always_keep_alive", isChecked).apply();
+                if (isChecked) {
+                    Toast.makeText(MainActivity.this, R.string.toast_bg_enabled, Toast.LENGTH_SHORT).show();
+                } else {
+                    if (isGenerating) {
+                        startBackgroundService(BackgroundKeepAliveService.ACTION_STOP_KEEPALIVE);
+                    }
+                    Toast.makeText(MainActivity.this, R.string.toast_bg_disabled, Toast.LENGTH_SHORT).show();
                 }
             });
-        });
+        }
 
-        // Restore Backup Button (supports .zip and legacy .json)
-        dialogView.findViewById(R.id.btn_restore_backup).setOnClickListener(v -> {
-            dialog.dismiss();
-            importBackupLauncher.launch(new String[]{
-                    "application/zip",
-                    "application/x-zip-compressed",
-                    "application/octet-stream",
-                    "application/json",
-                    "*/*"
-            });
-        });
-
-        // Notification Switch
-        SwitchCompat swNotify = dialogView.findViewById(R.id.switch_notify_completion);
-        swNotify.setChecked(settingsPrefs.getBoolean("notify_completion", true));
-        swNotify.setOnCheckedChangeListener((btn, isChecked) ->
-                settingsPrefs.edit().putBoolean("notify_completion", isChecked).apply());
+        // Completion Notification Switch
+        MaterialSwitch swNotify = dialogView.findViewById(R.id.switch_notify_completion);
+        if (swNotify != null) {
+            swNotify.setChecked(settingsPrefs.getBoolean("notify_completion", true));
+            swNotify.setOnCheckedChangeListener((btn, isChecked) ->
+                    settingsPrefs.edit().putBoolean("notify_completion", isChecked).apply());
+        }
 
         // Vibration Switch
-        SwitchCompat swVibrate = dialogView.findViewById(R.id.switch_vibration);
-        swVibrate.setChecked(settingsPrefs.getBoolean("vibrate_completion", true));
-        swVibrate.setOnCheckedChangeListener((btn, isChecked) ->
-                settingsPrefs.edit().putBoolean("vibrate_completion", isChecked).apply());
+        MaterialSwitch swVibrate = dialogView.findViewById(R.id.switch_vibration);
+        if (swVibrate != null) {
+            swVibrate.setChecked(settingsPrefs.getBoolean("vibrate_completion", true));
+            swVibrate.setOnCheckedChangeListener((btn, isChecked) ->
+                    settingsPrefs.edit().putBoolean("vibrate_completion", isChecked).apply());
+        }
 
-        // Pull to refresh Switch
-        SwitchCompat swPullRefresh = dialogView.findViewById(R.id.switch_pull_refresh);
-        swPullRefresh.setChecked(settingsPrefs.getBoolean("pull_refresh", false));
-        swPullRefresh.setOnCheckedChangeListener((btn, isChecked) -> {
-            settingsPrefs.edit().putBoolean("pull_refresh", isChecked).apply();
-            swipeRefreshLayout.setEnabled(isChecked);
-        });
+        // Auto-Backup Folder Display & Change Button
+        TextView tvFolder = dialogView.findViewById(R.id.tv_auto_backup_folder);
+        if (tvFolder != null) {
+            tvFolder.setText(accountManager.getBackupManager().getFormattedAutoBackupLocation());
+        }
+
+        View btnChangeFolder = dialogView.findViewById(R.id.btn_change_backup_folder);
+        if (btnChangeFolder != null) {
+            btnChangeFolder.setOnClickListener(v -> {
+                chooseBackupFolderLauncher.launch(null);
+            });
+        }
+
+        TextView tvLastBackup = dialogView.findViewById(R.id.tv_last_backup_time);
+        if (tvLastBackup != null) {
+            long lastTime = accountManager.getBackupManager().getLastAutoBackupTimestamp();
+            if (lastTime > 0) {
+                String formatted = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date(lastTime));
+                tvLastBackup.setText(getString(R.string.backup_last_time_prefix) + formatted);
+            } else {
+                tvLastBackup.setText(R.string.backup_last_time_none);
+            }
+        }
+
+        // Export Backup Button (ZIP archive with cookies and localStorage)
+        View btnExport = dialogView.findViewById(R.id.btn_export_backup);
+        if (btnExport != null) {
+            btnExport.setOnClickListener(v -> {
+                accountManager.snapshotAndSaveCurrentSession(webView, new Runnable() {
+                    @Override
+                    public void run() {
+                        accountManager.getBackupManager().performAutoBackup(
+                                accountManager.getAccountsJson(),
+                                accountManager.getActiveAccount().id
+                        );
+                        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+                        exportBackupLauncher.launch("venice_backup_" + timeStamp + ".zip");
+                    }
+                });
+            });
+        }
+
+        // Restore Backup Button (supports .zip and legacy .json)
+        View btnRestore = dialogView.findViewById(R.id.btn_restore_backup);
+        if (btnRestore != null) {
+            btnRestore.setOnClickListener(v -> {
+                dialog.dismiss();
+                importBackupLauncher.launch(new String[]{
+                        "application/zip",
+                        "application/x-zip-compressed",
+                        "application/octet-stream",
+                        "application/json",
+                        "*/*"
+                });
+            });
+        }
 
         // Floating Menu Button Switch
-        SwitchCompat swFloating = dialogView.findViewById(R.id.switch_floating_button);
-        swFloating.setChecked(settingsPrefs.getBoolean("show_floating_button", true));
-        swFloating.setOnCheckedChangeListener((btn, isChecked) -> {
-            settingsPrefs.edit().putBoolean("show_floating_button", isChecked).apply();
-            fabLauncherMenu.setVisibility(isChecked ? View.VISIBLE : View.GONE);
-            if (!isChecked) {
-                Toast.makeText(MainActivity.this, R.string.toast_floating_hidden, Toast.LENGTH_LONG).show();
-            }
-        });
+        MaterialSwitch swFloating = dialogView.findViewById(R.id.switch_floating_button);
+        if (swFloating != null) {
+            swFloating.setChecked(settingsPrefs.getBoolean("show_floating_button", true));
+            swFloating.setOnCheckedChangeListener((btn, isChecked) -> {
+                settingsPrefs.edit().putBoolean("show_floating_button", isChecked).apply();
+                fabLauncherMenu.setVisibility(isChecked ? View.VISIBLE : View.GONE);
+                if (!isChecked) {
+                    Toast.makeText(MainActivity.this, R.string.toast_floating_hidden, Toast.LENGTH_LONG).show();
+                }
+            });
+        }
+
+        // Pull to refresh Switch
+        MaterialSwitch swPullRefresh = dialogView.findViewById(R.id.switch_pull_refresh);
+        if (swPullRefresh != null) {
+            swPullRefresh.setChecked(settingsPrefs.getBoolean("pull_refresh", false));
+            swPullRefresh.setOnCheckedChangeListener((btn, isChecked) -> {
+                settingsPrefs.edit().putBoolean("pull_refresh", isChecked).apply();
+                swipeRefreshLayout.setEnabled(isChecked);
+            });
+        }
 
         // Reload Page Button
-        dialogView.findViewById(R.id.btn_reload_page).setOnClickListener(v -> {
-            webView.reload();
-            dialog.dismiss();
-        });
+        View btnReload = dialogView.findViewById(R.id.btn_reload_page);
+        if (btnReload != null) {
+            btnReload.setOnClickListener(v -> {
+                webView.reload();
+                dialog.dismiss();
+            });
+        }
 
         // Clear Cache Button
-        dialogView.findViewById(R.id.btn_clear_cache).setOnClickListener(v -> {
-            webView.clearCache(true);
-            Toast.makeText(MainActivity.this, R.string.cache_cleared, Toast.LENGTH_SHORT).show();
-            dialog.dismiss();
-        });
+        View btnClear = dialogView.findViewById(R.id.btn_clear_cache);
+        if (btnClear != null) {
+            btnClear.setOnClickListener(v -> {
+                webView.clearCache(true);
+                Toast.makeText(MainActivity.this, R.string.cache_cleared, Toast.LENGTH_SHORT).show();
+                dialog.dismiss();
+            });
+        }
 
         // Close Button
-        dialogView.findViewById(R.id.btn_close_settings).setOnClickListener(v -> dialog.dismiss());
+        View btnClose = dialogView.findViewById(R.id.btn_close_settings);
+        if (btnClose != null) {
+            btnClose.setOnClickListener(v -> dialog.dismiss());
+        }
 
         dialog.show();
     }
@@ -725,23 +809,29 @@ public class MainActivity extends AppCompatActivity {
     protected void onPause() {
         super.onPause();
         accountManager.captureActiveCookies();
-        // Do NOT pause webview timers!
-        if (isGenerating) {
+        accountManager.snapshotAndSaveCurrentSession(webView, new Runnable() {
+            @Override
+            public void run() {
+                accountManager.triggerAutoBackup();
+            }
+        });
+
+        // Background Keep-Alive ONLY runs if AI is currently generating and feature is enabled!
+        if (isGenerating && isKeepAliveEnabled()) {
             startBackgroundService(BackgroundKeepAliveService.ACTION_GENERATION_STARTED);
-            Log.d(TAG, "Activity onPause: Generating in background, KeepAlive started");
-        } else if (isAlwaysKeepAliveEnabled()) {
-            startBackgroundService(BackgroundKeepAliveService.ACTION_START_KEEPALIVE);
-            Log.d(TAG, "Activity onPause: AlwaysKeepAlive enabled");
+            Log.d(TAG, "Activity onPause: Generating in background, KeepAlive active");
+        } else {
+            startBackgroundService(BackgroundKeepAliveService.ACTION_STOP_KEEPALIVE);
         }
     }
 
     @Override
     protected void onStop() {
         super.onStop();
-        if (isGenerating) {
+        if (isGenerating && isKeepAliveEnabled()) {
             startBackgroundService(BackgroundKeepAliveService.ACTION_GENERATION_STARTED);
-        } else if (isAlwaysKeepAliveEnabled()) {
-            startBackgroundService(BackgroundKeepAliveService.ACTION_START_KEEPALIVE);
+        } else {
+            startBackgroundService(BackgroundKeepAliveService.ACTION_STOP_KEEPALIVE);
         }
     }
 

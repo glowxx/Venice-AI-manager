@@ -157,6 +157,18 @@ public class AccountManager {
         });
     }
 
+    public void triggerAutoBackup() {
+        final String jsonString = getAccountsJson();
+        final String activeId = prefs.getString(KEY_ACTIVE_ACCOUNT_ID, "profile_default");
+        backupExecutor.execute(() -> {
+            try {
+                backupManager.performAutoBackup(jsonString, activeId);
+            } catch (Exception e) {
+                Log.w(TAG, "Trigger auto-backup failed", e);
+            }
+        });
+    }
+
     public synchronized void captureActiveCookies() {
         CookieManager cm = CookieManager.getInstance();
         String cookies = cm.getCookie(VENICE_URL);
