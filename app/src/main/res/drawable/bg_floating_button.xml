@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="oval">
-    <solid android:color="#E6161B22" />
+    <solid android:color="#F20E1217" />
     <stroke
         android:width="1.5dp"
-        android:color="#40388BFD" />
+        android:color="@color/venice_surface_border" />
     <size
         android:width="44dp"
         android:height="44dp" />

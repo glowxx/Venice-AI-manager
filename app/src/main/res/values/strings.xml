@@ -15,10 +15,10 @@
     
     <!-- Background Service -->
     <string name="bg_channel_name">Venice AI Keep-Alive Service</string>
-    <string name="bg_channel_desc">Keeps AI response streaming active in background</string>
+    <string name="bg_channel_desc">Keeps AI response streaming active in background during generation</string>
     <string name="bg_notification_title">Venice AI</string>
     <string name="bg_notification_generating">Generating response in background...</string>
-    <string name="bg_notification_idle">Background keep-alive active (idle)</string>
+    <string name="bg_notification_idle">Venice AI idle</string>
     <string name="bg_completion_title">Venice AI: Response Ready!</string>
     <string name="bg_completion_desc">AI has finished generating your response. Tap to view.</string>
     
@@ -35,17 +35,17 @@
     <string name="btn_close">Close</string>
 
     <!-- Settings Sections -->
-    <string name="settings_title">Launcher Settings</string>
-    <string name="section_account">ACCOUNT PROFILE</string>
-    <string name="section_engine">BACKGROUND ENGINE</string>
-    <string name="section_backup">DATA PERSISTENCE &amp; BACKUPS</string>
+    <string name="settings_title">Venice Settings</string>
+    <string name="section_account">ACTIVE PROFILE</string>
+    <string name="section_engine">BACKGROUND GENERATION</string>
+    <string name="section_backup">AUTOMATIC DATA BACKUP</string>
     <string name="section_notifications">ALERTS &amp; FEEDBACK</string>
-    <string name="section_browser">BROWSER &amp; CONTROLS</string>
+    <string name="section_browser">INTERFACE &amp; CACHE</string>
     
     <!-- Settings Items -->
-    <string name="active_profile_label">Active Profile</string>
-    <string name="setting_always_keep_alive">Background Keep-Alive</string>
-    <string name="setting_always_keep_alive_desc">Prevents Android from freezing generation when screen is off or app is minimized</string>
+    <string name="active_profile_label">Current Profile</string>
+    <string name="setting_always_keep_alive">Keep-Alive During Generation</string>
+    <string name="setting_always_keep_alive_desc">Runs background service only while AI is actively generating. Stops immediately upon completion.</string>
     <string name="setting_notify_completion">Completion Notification</string>
     <string name="setting_notify_completion_desc">Display alert when Venice AI finishes writing response</string>
     <string name="setting_vibration">Haptic Vibration</string>
@@ -53,29 +53,34 @@
     <string name="setting_pull_refresh">Pull-down to Refresh</string>
     <string name="setting_pull_refresh_desc">Swipe down from top of chat to reload page</string>
     <string name="setting_floating_button">Floating Menu Button</string>
-    <string name="setting_floating_button_desc">Draggable button to access settings. If hidden, hold Back button to open.</string>
+    <string name="setting_floating_button_desc">Draggable menu button. If hidden, hold Back button to open settings.</string>
     
-    <!-- Backup and Safety -->
-    <string name="backup_auto_status">Auto-Backup: Active (survives app updates)</string>
-    <string name="backup_location_desc">Saved to Documents/VeniceAI_Backups as ZIP archive</string>
+    <!-- Auto-Backup and Safety -->
+    <string name="backup_auto_live_status">Live Auto-Backup: Active</string>
+    <string name="backup_auto_live_desc">Automatically updates your ZIP backup whenever profiles, cookies, or storage change.</string>
+    <string name="backup_location_label">Backup Location</string>
+    <string name="backup_change_folder">Change Folder</string>
+    <string name="backup_last_time_prefix">Last auto-backup: </string>
+    <string name="backup_last_time_none">Pending initial sync</string>
     <string name="btn_export_backup">Export Backup (.zip)</string>
     <string name="btn_restore_backup">Restore from File (.zip)</string>
     
     <string name="setting_clear_cache">Clear Web Cache</string>
     <string name="setting_reload_page">Reload Venice Page</string>
     <string name="cache_cleared">Web cache and session cache cleared</string>
-    <string name="app_footer_info">Venice AI Launcher v1.0.4</string>
+    <string name="app_footer_info">Venice AI Launcher v1.0.5</string>
+    <string name="venice_footer_tagline">Venice AI · Private, Uncensored &amp; Unbiased</string>
     
     <!-- Status & Toasts -->
     <string name="status_generating_short">Generating...</string>
     <string name="status_ready_short">Ready</string>
-    <string name="status_background_on">Background Active</string>
+    <string name="status_background_on">Active Generation</string>
     <string name="toast_file_chooser_error">Cannot open file chooser</string>
     <string name="toast_download_started">Downloading file: %s</string>
     <string name="toast_download_error">Failed to download file</string>
     <string name="toast_history_start">Start of browsing history</string>
-    <string name="toast_bg_enabled">Background keep-alive: ENABLED</string>
-    <string name="toast_bg_disabled">Background keep-alive: DISABLED</string>
+    <string name="toast_bg_enabled">Keep-alive during generation: ENABLED</string>
+    <string name="toast_bg_disabled">Keep-alive during generation: DISABLED</string>
     <string name="toast_switching_account">Switching to profile: %s...</string>
     <string name="toast_account_active">Active account: %s</string>
     <string name="toast_account_deleted">Deleted account: %s</string>
@@ -85,4 +90,5 @@
     <string name="toast_backup_export_failed">Failed to export backup archive</string>
     <string name="toast_backup_restored">Successfully restored %d profile(s)!</string>
     <string name="toast_backup_restore_failed">Failed to restore backup: invalid format or empty file</string>
+    <string name="toast_folder_selected">Auto-backup folder updated!</string>
 </resources>

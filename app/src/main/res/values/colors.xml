@@ -1,21 +1,46 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="background_dark">#0E0E10</color>
-    <color name="surface_dark">#18181B</color>
-    <color name="surface_dark_card">#222226</color>
-    <color name="surface_dark_hover">#2A2A2E</color>
-    <color name="venice_accent">#06B6D4</color>
-    <color name="venice_accent_variant">#0891B2</color>
-    <color name="venice_glow">#22D3EE</color>
-    <color name="venice_purple">#8B5CF6</color>
-    <color name="status_active">#10B981</color>
-    <color name="status_generating">#F59E0B</color>
-    <color name="status_idle">#64748B</color>
-    <color name="text_primary">#F4F4F5</color>
-    <color name="text_secondary">#A1A1AA</color>
-    <color name="text_muted">#71717A</color>
-    <color name="divider">#27272A</color>
-    <color name="danger">#EF4444</color>
+    <!-- Authentic Venice.ai Design System Colors -->
+    <color name="venice_deep_sea">#06090D</color>
+    <color name="venice_midnight_blue">#0E1217</color>
+    <color name="venice_surface_dark">#0E1822</color>
+    <color name="venice_surface_card">#121820</color>
+    <color name="venice_surface_card_hover">#18202A</color>
+    <color name="venice_surface_border">#1E2833</color>
+    <color name="venice_border_subtle">#273340</color>
+    <color name="venice_border_highlight">#334455</color>
+    
+    <!-- Venice Typography Tokens -->
+    <color name="venice_stucco_light">#EEEDE4</color>
+    <color name="venice_stucco_mid">#BEA989</color>
+    <color name="venice_stucco_dark">#63534B</color>
+    <color name="venice_muted">#8A949C</color>
+    <color name="venice_neutral_gray">#6F7479</color>
+    
+    <!-- Venice Accents & Semantic Colors -->
+    <color name="venice_accent_blue">#125DA3</color>
+    <color name="venice_accent_light">#4898E6</color>
+    <color name="venice_signal">#55D188</color>
+    <color name="venice_red">#D73436</color>
+    <color name="venice_red_light">#F07174</color>
+
+    <!-- Legacy / Compatibility Aliases mapped to Venice Tokens -->
+    <color name="background_dark">#06090D</color>
+    <color name="surface_dark">#0E1217</color>
+    <color name="surface_dark_card">#121820</color>
+    <color name="surface_dark_hover">#18202A</color>
+    <color name="venice_accent">#125DA3</color>
+    <color name="venice_accent_variant">#4898E6</color>
+    <color name="venice_glow">#4898E6</color>
+    <color name="venice_purple">#BEA989</color>
+    <color name="status_active">#55D188</color>
+    <color name="status_generating">#BEA989</color>
+    <color name="status_idle">#8A949C</color>
+    <color name="text_primary">#EEEDE4</color>
+    <color name="text_secondary">#BEA989</color>
+    <color name="text_muted">#8A949C</color>
+    <color name="divider">#1E2833</color>
+    <color name="danger">#D73436</color>
     <color name="black">#000000</color>
     <color name="white">#FFFFFF</color>
 </resources>
