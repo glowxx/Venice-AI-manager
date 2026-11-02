@@ -44,8 +44,7 @@ public class BackgroundKeepAliveService extends Service {
         public void run() {
             Log.w(TAG, "Safety timeout reached for generation WakeLock");
             isGenerating = false;
-            releaseWakeLock();
-            updateNotification(false);
+            stopForegroundService();
         }
     };
 
@@ -66,11 +65,20 @@ public class BackgroundKeepAliveService extends Service {
         }
 
         if (ACTION_GENERATION_STARTED.equals(action)) {
-            isGenerating = true;
-            acquireWakeLock();
-            timeoutHandler.removeCallbacks(wakeLockTimeoutRunnable);
-            timeoutHandler.postDelayed(wakeLockTimeoutRunnable, MAX_GENERATION_WAKELOCK_TIMEOUT);
-            startOrUpdateForeground(true);
+            SharedPreferences prefs = getSharedPreferences("venice_settings", MODE_PRIVATE);
+            boolean keepAliveEnabled = prefs.getBoolean("always_keep_alive", true);
+
+            if (keepAliveEnabled) {
+                isGenerating = true;
+                acquireWakeLock();
+                timeoutHandler.removeCallbacks(wakeLockTimeoutRunnable);
+                timeoutHandler.postDelayed(wakeLockTimeoutRunnable, MAX_GENERATION_WAKELOCK_TIMEOUT);
+                startForegroundWithNotification();
+                return START_STICKY;
+            } else {
+                stopForegroundService();
+                return START_NOT_STICKY;
+            }
         } else if (ACTION_GENERATION_FINISHED.equals(action)) {
             boolean wasGenerating = isGenerating;
             isGenerating = false;
@@ -81,33 +89,19 @@ public class BackgroundKeepAliveService extends Service {
                 notifyGenerationComplete();
             }
 
-            SharedPreferences prefs = getSharedPreferences("venice_settings", MODE_PRIVATE);
-            boolean alwaysKeepAlive = prefs.getBoolean("always_keep_alive", false);
-            if (alwaysKeepAlive) {
-                // Update to idle status, definitely NOT generating
-                startOrUpdateForeground(false);
-            } else {
-                stopForegroundService();
-                return START_NOT_STICKY;
-            }
+            // Immediately stop foreground service and dismiss notification!
+            // The service NEVER runs when idle.
+            stopForegroundService();
+            return START_NOT_STICKY;
         } else {
-            // Default START_KEEPALIVE (idle start)
-            isGenerating = false;
-            SharedPreferences prefs = getSharedPreferences("venice_settings", MODE_PRIVATE);
-            boolean alwaysKeepAlive = prefs.getBoolean("always_keep_alive", false);
-            if (alwaysKeepAlive) {
-                startOrUpdateForeground(false);
-            } else {
-                stopForegroundService();
-                return START_NOT_STICKY;
-            }
+            // Any other action or idle call immediately shuts down
+            stopForegroundService();
+            return START_NOT_STICKY;
         }
-
-        return START_STICKY;
     }
 
-    private void startOrUpdateForeground(boolean generating) {
-        Notification notification = buildNotification(generating);
+    private void startForegroundWithNotification() {
+        Notification notification = buildGeneratingNotification();
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 int serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
@@ -128,13 +122,7 @@ public class BackgroundKeepAliveService extends Service {
         }
     }
 
-    private void updateNotification(boolean generating) {
-        if (notificationManager != null) {
-            notificationManager.notify(NOTIFICATION_ID, buildNotification(generating));
-        }
-    }
-
-    private Notification buildNotification(boolean generating) {
+    private Notification buildGeneratingNotification() {
         Intent openAppIntent = new Intent(this, MainActivity.class);
         openAppIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent pendingIntent = PendingIntent.getActivity(
@@ -142,28 +130,16 @@ public class BackgroundKeepAliveService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
         );
 
-        String title = generating
-                ? getString(R.string.bg_notification_generating)
-                : getString(R.string.bg_notification_title);
-
-        String desc = generating
-                ? getString(R.string.bg_channel_desc)
-                : getString(R.string.bg_notification_idle);
-
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+        return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_venice_logo)
-                .setContentTitle(title)
-                .setContentText(desc)
+                .setContentTitle(getString(R.string.bg_notification_generating))
+                .setContentText(getString(R.string.bg_channel_desc))
                 .setContentIntent(pendingIntent)
-                .setOngoing(generating)
-                .setPriority(generating ? NotificationCompat.PRIORITY_HIGH : NotificationCompat.PRIORITY_LOW)
-                .setColor(getColor(R.color.venice_accent));
-
-        if (generating) {
-            builder.setProgress(0, 0, true);
-        }
-
-        return builder.build();
+                .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setColor(getColor(R.color.venice_accent_blue))
+                .setProgress(0, 0, true)
+                .build();
     }
 
     private void notifyGenerationComplete() {
@@ -187,7 +163,7 @@ public class BackgroundKeepAliveService extends Service {
                 .setContentIntent(pendingIntent)
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setColor(getColor(R.color.status_active));
+                .setColor(getColor(R.color.venice_signal));
 
         if (notificationManager != null) {
             notificationManager.notify(COMPLETION_NOTIFICATION_ID, builder.build());
@@ -224,7 +200,7 @@ public class BackgroundKeepAliveService extends Service {
             }
             if (wakeLock != null && !wakeLock.isHeld()) {
                 wakeLock.acquire(MAX_GENERATION_WAKELOCK_TIMEOUT);
-                Log.d(TAG, "WakeLock acquired for background generation");
+                Log.d(TAG, "WakeLock acquired for active generation");
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed acquiring WakeLock", e);

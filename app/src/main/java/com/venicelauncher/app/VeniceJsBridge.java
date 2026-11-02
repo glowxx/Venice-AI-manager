@@ -39,12 +39,16 @@ public class VeniceJsBridge {
                     if (stateListener != null) {
                         stateListener.onGenerationStateChanged(true);
                     }
-                    Intent serviceIntent = new Intent(context, BackgroundKeepAliveService.class);
-                    serviceIntent.setAction(BackgroundKeepAliveService.ACTION_GENERATION_STARTED);
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                        context.startForegroundService(serviceIntent);
-                    } else {
-                        context.startService(serviceIntent);
+                    android.content.SharedPreferences prefs = context.getSharedPreferences("venice_settings", Context.MODE_PRIVATE);
+                    boolean keepAliveEnabled = prefs.getBoolean("always_keep_alive", true);
+                    if (keepAliveEnabled) {
+                        Intent serviceIntent = new Intent(context, BackgroundKeepAliveService.class);
+                        serviceIntent.setAction(BackgroundKeepAliveService.ACTION_GENERATION_STARTED);
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            context.startForegroundService(serviceIntent);
+                        } else {
+                            context.startService(serviceIntent);
+                        }
                     }
                 }
             });
