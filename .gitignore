@@ -23,3 +23,6 @@ Thumbs.db
 *.iml
 .navigation/
 captures/
+
+# Graphify output
+graphify-out/

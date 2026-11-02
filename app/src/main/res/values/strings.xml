@@ -2,13 +2,17 @@
 <resources>
     <string name="app_name">Venice AI</string>
     <string name="default_account_name">Main Account</string>
+    <string name="incognito_account_name">Incognito Profile</string>
     <string name="accounts_manager">Account Manager</string>
     <string name="accounts_manager_desc">Switch profiles or create a separate Venice AI session.</string>
     <string name="add_account">Add Account</string>
+    <string name="btn_add_incognito">New Incognito Session</string>
     <string name="switch_account">Switch Account</string>
     <string name="delete_account">Delete Account</string>
     <string name="rename_account">Rename</string>
     <string name="active_account_prefix">Active: </string>
+    <string name="incognito_status_badge">Incognito (Temporary)</string>
+    <string name="incognito_status_desc">Temporary session · Erased on switch or exit</string>
     <string name="dialog_add_account_title">New Account Profile</string>
     <string name="dialog_add_account_hint">Account name (e.g. Personal, Work, Pro)</string>
     <string name="dialog_delete_confirm">Are you sure you want to delete profile \"%s\"? All saved session data for this account will be removed.</string>
@@ -68,7 +72,7 @@
     <string name="setting_clear_cache">Clear Web Cache</string>
     <string name="setting_reload_page">Reload Venice Page</string>
     <string name="cache_cleared">Web cache and session cache cleared</string>
-    <string name="app_footer_info">Venice AI Launcher v1.0.5</string>
+    <string name="app_footer_info">Venice AI Launcher v1.0.6</string>
     <string name="venice_footer_tagline">Venice AI · Private, Uncensored &amp; Unbiased</string>
     
     <!-- Status & Toasts -->
@@ -85,6 +89,8 @@
     <string name="toast_account_active">Active account: %s</string>
     <string name="toast_account_deleted">Deleted account: %s</string>
     <string name="toast_account_created">Created profile: %s</string>
+    <string name="toast_incognito_active">Incognito profile active. Data will be erased upon switching or exiting.</string>
+    <string name="toast_incognito_purged">Incognito session erased.</string>
     <string name="toast_floating_hidden">Floating button hidden. Long-press Back button to open settings.</string>
     <string name="toast_backup_exported">Backup saved to: %s</string>
     <string name="toast_backup_export_failed">Failed to export backup archive</string>

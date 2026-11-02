@@ -40,6 +40,7 @@ public class AccountManager {
         public String cookies;
         public String localStorageJson;
         public String sessionStorageJson;
+        public boolean isIncognito;
 
         public AccountProfile(String id, String name, long createdAt) {
             this.id = id;
@@ -48,6 +49,7 @@ public class AccountManager {
             this.cookies = "";
             this.localStorageJson = "{}";
             this.sessionStorageJson = "{}";
+            this.isIncognito = false;
         }
 
         public JSONObject toJson() throws JSONException {
@@ -58,6 +60,7 @@ public class AccountManager {
             obj.put("cookies", cookies);
             obj.put("localStorageJson", localStorageJson);
             obj.put("sessionStorageJson", sessionStorageJson);
+            obj.put("isIncognito", isIncognito);
             return obj;
         }
 
@@ -70,6 +73,7 @@ public class AccountManager {
             profile.cookies = obj.optString("cookies", "");
             profile.localStorageJson = obj.optString("localStorageJson", "{}");
             profile.sessionStorageJson = obj.optString("sessionStorageJson", "{}");
+            profile.isIncognito = obj.optBoolean("isIncognito", false);
             return profile;
         }
     }
@@ -93,7 +97,33 @@ public class AccountManager {
         return prefs.getString(KEY_ACCOUNTS, "[]");
     }
 
+    public synchronized String getPermanentAccountsJson() {
+        List<AccountProfile> list = getAccounts();
+        JSONArray arr = new JSONArray();
+        for (AccountProfile p : list) {
+            if (!p.isIncognito) {
+                try {
+                    arr.put(p.toJson());
+                } catch (JSONException ignored) {}
+            }
+        }
+        return arr.toString();
+    }
+
+    public synchronized String getFirstPermanentAccountId() {
+        List<AccountProfile> list = getAccounts();
+        for (AccountProfile p : list) {
+            if (!p.isIncognito) {
+                return p.id;
+            }
+        }
+        return "profile_default";
+    }
+
     private void ensureDefaultAccount() {
+        // Automatically purge any stale incognito temporary accounts from previous sessions
+        purgeIncognitoAccounts(true);
+
         List<AccountProfile> list = getAccounts();
         if (list.isEmpty()) {
             BackupManager.BackupData existing = backupManager.getLatestExistingBackup();
@@ -146,11 +176,13 @@ public class AccountManager {
                 .putInt(KEY_SCHEMA_VERSION, BackupManager.CURRENT_BACKUP_SCHEMA_VERSION)
                 .apply();
 
-        // Perform asynchronous ZIP automatic backup to ensure data persistence
-        final String activeId = prefs.getString(KEY_ACTIVE_ACCOUNT_ID, "profile_default");
+        // Perform asynchronous ZIP automatic backup for permanent accounts only
+        final String permanentJson = getPermanentAccountsJson();
+        AccountProfile active = getActiveAccount();
+        final String backupActiveId = active.isIncognito ? getFirstPermanentAccountId() : active.id;
         backupExecutor.execute(() -> {
             try {
-                backupManager.performAutoBackup(jsonString, activeId);
+                backupManager.performAutoBackup(permanentJson, backupActiveId);
             } catch (Exception e) {
                 Log.w(TAG, "Auto-backup failed", e);
             }
@@ -158,11 +190,12 @@ public class AccountManager {
     }
 
     public void triggerAutoBackup() {
-        final String jsonString = getAccountsJson();
-        final String activeId = prefs.getString(KEY_ACTIVE_ACCOUNT_ID, "profile_default");
+        final String permanentJson = getPermanentAccountsJson();
+        AccountProfile active = getActiveAccount();
+        final String backupActiveId = active.isIncognito ? getFirstPermanentAccountId() : active.id;
         backupExecutor.execute(() -> {
             try {
-                backupManager.performAutoBackup(jsonString, activeId);
+                backupManager.performAutoBackup(permanentJson, backupActiveId);
             } catch (Exception e) {
                 Log.w(TAG, "Trigger auto-backup failed", e);
             }
@@ -280,6 +313,11 @@ public class AccountManager {
         return getAccounts().get(0);
     }
 
+    public synchronized boolean isIncognitoActive() {
+        AccountProfile active = getActiveAccount();
+        return active != null && active.isIncognito;
+    }
+
     public synchronized AccountProfile createAccount(String name) {
         List<AccountProfile> list = getAccounts();
         String id = "profile_" + System.currentTimeMillis();
@@ -287,6 +325,51 @@ public class AccountManager {
         list.add(newProfile);
         saveAccountsList(list);
         return newProfile;
+    }
+
+    public synchronized AccountProfile createIncognitoAccount() {
+        // Purge any preexisting incognito temporary accounts
+        purgeIncognitoAccounts(false);
+
+        List<AccountProfile> list = getAccounts();
+        String id = "profile_incognito_" + System.currentTimeMillis();
+        AccountProfile incognito = new AccountProfile(id, context.getString(R.string.incognito_account_name), System.currentTimeMillis());
+        incognito.isIncognito = true;
+        incognito.cookies = "";
+        incognito.localStorageJson = "{}";
+        incognito.sessionStorageJson = "{}";
+
+        list.add(incognito);
+        saveAccountsList(list);
+        return incognito;
+    }
+
+    public synchronized void purgeIncognitoAccounts(boolean clearActiveCookiesIfActive) {
+        boolean wasActiveIncognito = isIncognitoActive();
+        List<AccountProfile> list = getAccounts();
+        List<AccountProfile> toKeep = new ArrayList<>();
+        for (AccountProfile p : list) {
+            if (!p.isIncognito) {
+                toKeep.add(p);
+            }
+        }
+
+        if (toKeep.isEmpty()) {
+            toKeep.add(new AccountProfile("profile_default", context.getString(R.string.default_account_name), System.currentTimeMillis()));
+        }
+
+        if (list.size() != toKeep.size()) {
+            saveAccountsList(toKeep);
+            Log.i(TAG, "Purged incognito temporary accounts (" + (list.size() - toKeep.size()) + " removed)");
+        }
+
+        if (wasActiveIncognito) {
+            prefs.edit().putString(KEY_ACTIVE_ACCOUNT_ID, toKeep.get(0).id).apply();
+            if (clearActiveCookiesIfActive) {
+                CookieManager.getInstance().removeAllCookies(null);
+                CookieManager.getInstance().flush();
+            }
+        }
     }
 
     public synchronized boolean deleteAccount(String id) {
@@ -379,6 +462,16 @@ public class AccountManager {
     }
 
     public void switchAccount(WebView webView, String targetId, SwitchCallback callback) {
+        AccountProfile current = getActiveAccount();
+        if (current.isIncognito && !targetId.equals(current.id)) {
+            // Switching away from Incognito: do NOT save incognito data!
+            // Immediately purge the incognito temporary profile from storage
+            purgeIncognitoAccounts(false);
+            prefs.edit().putString(KEY_ACTIVE_ACCOUNT_ID, targetId).apply();
+            applyActiveAccountToWebView(webView, callback);
+            return;
+        }
+
         snapshotAndSaveCurrentSession(webView, new Runnable() {
             @Override
             public void run() {

@@ -1,12 +1,26 @@
 # Venice AI Manager for Android
 
 [![Platform](https://img.shields.io/badge/Platform-Android%208.0%2B%20(API%2026--34)-green.svg)](https://android.com)
-[![Version](https://img.shields.io/badge/Version-1.0.5-blue.svg)](https://github.com/glowxx/Venice-AI-manager/releases)
+[![Version](https://img.shields.io/badge/Version-1.0.6-blue.svg)](https://github.com/glowxx/Venice-AI-manager/releases)
 [![License](https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg)](LICENSE)
 
 A native Android wrapper, session manager, and background generation runner for [Venice.ai](https://venice.ai).
 
 Standard mobile browsers suspend background JavaScript processing when the app is minimized or the screen turns off, terminating long-running AI stream generation and losing context. Furthermore, managing multiple Venice AI accounts requires tedious logout/login cycles. **Venice AI Manager** solves these issues with generation-only background execution, isolated profile switching, authentic Venice.ai aesthetics, and live automatic backups.
+
+---
+
+## What's New in v1.0.6
+
+1. **Temporary Incognito Profiles (Disposable Sessions)**:
+   - Create disposable incognito sessions in the Account Manager with a single tap.
+   - **Zero-Trace Auto-Purge**: All cookies, session storage, and profile credentials are completely purged immediately upon switching to another profile or exiting/closing the application.
+   - **Backup Isolation**: Incognito sessions are strictly excluded from automated ZIP backup archives (`venice_backup_*.zip`) and local profile lists, preventing accidental privacy leaks.
+   - Visual indicator badge (`🕶 Incognito`) in dialogs and account switcher.
+
+2. **Refined Session Lifecycle Protection**:
+   - Web storage (`localStorage` & `sessionStorage`) cleared and re-injected per account switch.
+   - Automatic cleanup of any stale temporary sessions upon application cold boot.
 
 ---
 

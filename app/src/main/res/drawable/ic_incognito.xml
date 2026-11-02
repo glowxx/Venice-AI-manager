@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Incognito Hat and Glasses -->
+    <!-- Hat Brim -->
+    <path
+        android:fillColor="@color/venice_stucco_mid"
+        android:pathData="M2,10h20v2H2z" />
+    <!-- Hat Top -->
+    <path
+        android:fillColor="@color/venice_stucco_mid"
+        android:pathData="M7,10l1.5,-6h7l1.5,6z" />
+    <!-- Glasses Left Lens -->
+    <path
+        android:fillColor="@color/venice_stucco_light"
+        android:pathData="M6.5,14c-1.93,0 -3.5,1.57 -3.5,3.5s1.57,3.5 3.5,3.5 3.5,-1.57 3.5,-3.5 -1.57,-3.5 -3.5,-3.5zm0,5c-0.83,0 -1.5,-0.67 -1.5,-1.5s0.67,-1.5 1.5,-1.5 1.5,0.67 1.5,1.5 -0.67,1.5 -1.5,1.5z" />
+    <!-- Glasses Right Lens -->
+    <path
+        android:fillColor="@color/venice_stucco_light"
+        android:pathData="M17.5,14c-1.93,0 -3.5,1.57 -3.5,3.5s1.57,3.5 3.5,3.5 3.5,-1.57 3.5,-3.5 -1.57,-3.5 -3.5,-3.5zm0,5c-0.83,0 -1.5,-0.67 -1.5,-1.5s0.67,-1.5 1.5,-1.5 1.5,0.67 1.5,1.5 -0.67,1.5 -1.5,1.5z" />
+    <!-- Glasses Bridge -->
+    <path
+        android:fillColor="@color/venice_stucco_light"
+        android:pathData="M10,17h4v1.5h-4z" />
+</vector>

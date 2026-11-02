@@ -361,7 +361,7 @@ public class MainActivity extends AppCompatActivity {
         ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
 
         // Modern Mobile Chrome user agent
-        String customUA = ws.getUserAgentString() + " VeniceLauncher/1.0.5 Mobile";
+        String customUA = ws.getUserAgentString() + " VeniceLauncher/1.0.6 Mobile";
         ws.setUserAgentString(customUA);
 
         // Enable cookies
@@ -523,7 +523,11 @@ public class MainActivity extends AppCompatActivity {
         TextView tvActiveAccName = dialogView.findViewById(R.id.tv_active_account_name);
         AccountManager.AccountProfile active = accountManager.getActiveAccount();
         if (active != null && tvActiveAccName != null) {
-            tvActiveAccName.setText(active.name);
+            if (active.isIncognito) {
+                tvActiveAccName.setText("🕶  " + active.name);
+            } else {
+                tvActiveAccName.setText(active.name);
+            }
         }
 
         // Manage Accounts Button
@@ -717,6 +721,16 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onAccountDelete(final AccountManager.AccountProfile profile) {
+                if (profile.isIncognito) {
+                    accountManager.deleteAccount(profile.id);
+                    CookieManager.getInstance().removeAllCookies(null);
+                    CookieManager.getInstance().flush();
+                    Toast.makeText(MainActivity.this, R.string.toast_incognito_purged, Toast.LENGTH_SHORT).show();
+                    dialog.dismiss();
+                    webView.reload();
+                    return;
+                }
+
                 new MaterialAlertDialogBuilder(MainActivity.this, R.style.VeniceDialogTheme)
                         .setTitle(R.string.delete_account)
                         .setMessage(getString(R.string.dialog_delete_confirm, profile.name))
@@ -746,6 +760,32 @@ public class MainActivity extends AppCompatActivity {
                 showAddAccountDialog();
             }
         });
+
+        View btnIncognito = dialogView.findViewById(R.id.btn_add_incognito);
+        if (btnIncognito != null) {
+            btnIncognito.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    dialog.dismiss();
+                    final AccountManager.AccountProfile incognito = accountManager.createIncognitoAccount();
+                    String msg = String.format(getString(R.string.toast_switching_account), incognito.name);
+                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
+
+                    accountManager.switchAccount(webView, incognito.id, new AccountManager.SwitchCallback() {
+                        @Override
+                        public void onSwitched(AccountManager.AccountProfile targetProfile) {
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    webView.reload();
+                                    Toast.makeText(MainActivity.this, R.string.toast_incognito_active, Toast.LENGTH_LONG).show();
+                                }
+                            });
+                        }
+                    });
+                }
+            });
+        }
 
         dialog.show();
     }
@@ -808,13 +848,15 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        accountManager.captureActiveCookies();
-        accountManager.snapshotAndSaveCurrentSession(webView, new Runnable() {
-            @Override
-            public void run() {
-                accountManager.triggerAutoBackup();
-            }
-        });
+        if (accountManager != null && !accountManager.isIncognitoActive()) {
+            accountManager.captureActiveCookies();
+            accountManager.snapshotAndSaveCurrentSession(webView, new Runnable() {
+                @Override
+                public void run() {
+                    accountManager.triggerAutoBackup();
+                }
+            });
+        }
 
         // Background Keep-Alive ONLY runs if AI is currently generating and feature is enabled!
         if (isGenerating && isKeepAliveEnabled()) {
@@ -838,6 +880,9 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         heartbeatHandler.removeCallbacks(heartbeatRunnable);
+        if (accountManager != null && accountManager.isIncognitoActive()) {
+            accountManager.purgeIncognitoAccounts(true);
+        }
         super.onDestroy();
     }
 
