@@ -1,12 +1,28 @@
 # Venice AI Manager for Android
 
 [![Platform](https://img.shields.io/badge/Platform-Android%208.0%2B%20(API%2026--34)-green.svg)](https://android.com)
-[![Version](https://img.shields.io/badge/Version-1.0.6-blue.svg)](https://github.com/glowxx/Venice-AI-manager/releases)
+[![Version](https://img.shields.io/badge/Version-1.0.7-blue.svg)](https://github.com/glowxx/Venice-AI-manager/releases)
 [![License](https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg)](LICENSE)
 
 A native Android wrapper, session manager, and background generation runner for [Venice.ai](https://venice.ai).
 
 Standard mobile browsers suspend background JavaScript processing when the app is minimized or the screen turns off, terminating long-running AI stream generation and losing context. Furthermore, managing multiple Venice AI accounts requires tedious logout/login cycles. **Venice AI Manager** solves these issues with generation-only background execution, isolated profile switching, authentic Venice.ai aesthetics, and live automatic backups.
+
+---
+
+## What's New in v1.0.7
+
+1. **Hardware-Level Sandboxed Browser Environments per Account (`ProfileStore`)**:
+   - Upgraded to modern `androidx.webkit.ProfileStore` multi-profile containerization.
+   - Each account operates in its own completely separate, physically isolated Chromium browser storage sandbox (`Profile.getOrCreateProfile()`).
+   - Dedicated, unshared storage per account:
+     - Independent Cookies (`profile.getCookieManager()`)
+     - Independent `localStorage` and `sessionStorage`
+     - Independent `IndexedDB` (where Venice.ai stores authentication tokens and session caches)
+     - Independent Service Worker controllers and HTTP caches
+   - Completely eliminates session bleeding and sticky accounts: switching accounts destroys the active renderer and instantiates a clean WebView bound strictly to the target profile's isolated container.
+2. **Physical Disk Deletion for Deleted and Incognito Profiles**:
+   - Deleting an account or leaving an incognito session triggers `ProfileStore.deleteProfile()`, physically removing all corresponding browser files, databases, and caches from disk.
 
 ---
 

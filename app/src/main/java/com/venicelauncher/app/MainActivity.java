@@ -17,11 +17,13 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
 import android.util.DisplayMetrics;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.PermissionRequest;
@@ -43,6 +45,8 @@ import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SwitchCompat;
@@ -50,6 +54,10 @@ import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
+import androidx.webkit.Profile;
+import androidx.webkit.ProfileStore;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
 
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
@@ -65,6 +73,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String TAG = "VeniceMainActivity";
     private static final String VENICE_CHAT_URL = "https://venice.ai/chat";
 
+    private FrameLayout webViewContainer;
     private WebView webView;
     private SwipeRefreshLayout swipeRefreshLayout;
     private ProgressBar progressBar;
@@ -107,17 +116,14 @@ public class MainActivity extends AppCompatActivity {
         initViews();
         setupLaunchers();
         setupPermissions();
-        setupWebView();
         setupFloatingMenu();
 
-        // Keep-alive only runs while active generation occurs - never on idle launch
-
-        // Load Venice AI Chat
-        loadVenice();
+        // Initialize and attach isolated WebView for the active account
+        switchAccountAndRecreateWebView(accountManager.getActiveAccount().id, null);
     }
 
     private void initViews() {
-        webView = findViewById(R.id.webview);
+        webViewContainer = findViewById(R.id.webview_container);
         swipeRefreshLayout = findViewById(R.id.swipe_refresh);
         progressBar = findViewById(R.id.progress_bar);
         fabLauncherMenu = findViewById(R.id.fab_launcher_menu);
@@ -129,7 +135,16 @@ public class MainActivity extends AppCompatActivity {
         swipeRefreshLayout.setOnRefreshListener(new SwipeRefreshLayout.OnRefreshListener() {
             @Override
             public void onRefresh() {
-                webView.reload();
+                if (webView != null) {
+                    webView.reload();
+                }
+            }
+        });
+
+        swipeRefreshLayout.setOnChildScrollUpCallback(new SwipeRefreshLayout.OnChildScrollUpCallback() {
+            @Override
+            public boolean canChildScrollUp(@NonNull SwipeRefreshLayout parent, @Nullable View child) {
+                return webView != null && webView.canScrollVertically(-1);
             }
         });
 
@@ -202,18 +217,8 @@ public class MainActivity extends AppCompatActivity {
                                 String msg = String.format(getString(R.string.toast_backup_restored), count);
                                 Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
 
-                                // Immediately apply restored cookies and storage to WebView
-                                accountManager.applyActiveAccountToWebView(webView, new AccountManager.SwitchCallback() {
-                                    @Override
-                                    public void onSwitched(AccountManager.AccountProfile targetProfile) {
-                                        runOnUiThread(new Runnable() {
-                                            @Override
-                                            public void run() {
-                                                webView.reload();
-                                            }
-                                        });
-                                    }
-                                });
+                                // Recreate isolated WebView for restored active account
+                                switchAccountAndRecreateWebView(accountManager.getActiveAccount().id, null);
                             } else {
                                 Toast.makeText(MainActivity.this, R.string.toast_backup_restore_failed, Toast.LENGTH_LONG).show();
                             }
@@ -344,8 +349,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private void setupWebView() {
-        WebSettings ws = webView.getSettings();
+    private void setupWebView(final WebView wv, final String accountId) {
+        WebSettings ws = wv.getSettings();
         ws.setJavaScriptEnabled(true);
         ws.setDomStorageEnabled(true);
         ws.setDatabaseEnabled(true);
@@ -361,15 +366,16 @@ public class MainActivity extends AppCompatActivity {
         ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
 
         // Modern Mobile Chrome user agent
-        String customUA = ws.getUserAgentString() + " VeniceLauncher/1.0.6 Mobile";
+        String customUA = ws.getUserAgentString() + " VeniceLauncher/1.0.7 Mobile";
         ws.setUserAgentString(customUA);
 
-        // Enable cookies
-        CookieManager.getInstance().setAcceptCookie(true);
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+        // Enable cookies for profile
+        CookieManager cm = accountManager.getCookieManagerForProfile(accountId);
+        cm.setAcceptCookie(true);
+        cm.setAcceptThirdPartyCookies(wv, true);
 
         // Add JavaScript bridge for generation state detection
-        webView.addJavascriptInterface(veniceJsBridge, VeniceJsBridge.JS_INTERFACE_NAME);
+        wv.addJavascriptInterface(veniceJsBridge, VeniceJsBridge.JS_INTERFACE_NAME);
         veniceJsBridge.setStateListener(new VeniceJsBridge.GenerationStateListener() {
             @Override
             public void onGenerationStateChanged(final boolean generating) {
@@ -389,7 +395,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // WebViewClient
-        webView.setWebViewClient(new WebViewClient() {
+        wv.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
@@ -411,7 +417,6 @@ public class MainActivity extends AppCompatActivity {
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
                 progressBar.setVisibility(View.VISIBLE);
-                // DO NOT wipe localStorage here! Let Chromium keep active session intact.
             }
 
             @Override
@@ -421,16 +426,17 @@ public class MainActivity extends AppCompatActivity {
                 swipeRefreshLayout.setRefreshing(false);
 
                 // Inject background generation detector
-                webView.evaluateJavascript(VeniceJsBridge.getInjectionScript(), null);
+                wv.evaluateJavascript(VeniceJsBridge.getInjectionScript(), null);
 
                 // Flush active cookies and snapshot them to active profile
-                CookieManager.getInstance().flush();
+                CookieManager profileCm = accountManager.getCookieManagerForProfile(accountId);
+                profileCm.flush();
                 accountManager.captureActiveCookies();
             }
         });
 
         // WebChromeClient
-        webView.setWebChromeClient(new WebChromeClient() {
+        wv.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
                 if (newProgress < 100) {
@@ -469,7 +475,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // Download Listener for generated images / attachments
-        webView.setDownloadListener(new DownloadListener() {
+        wv.setDownloadListener(new DownloadListener() {
             @Override
             public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimeType, long contentLength) {
                 try {
@@ -495,8 +501,124 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    public void switchAccountAndRecreateWebView(final String targetAccountId, final Runnable onReady) {
+        // 1. Save live cookies of current profile if not incognito
+        AccountManager.AccountProfile current = accountManager.getActiveAccount();
+        if (current != null) {
+            if (!current.isIncognito) {
+                accountManager.captureActiveCookies();
+            } else if (!current.id.equals(targetAccountId)) {
+                // If leaving an incognito session, delete its profile from ProfileStore
+                accountManager.purgeIncognitoAccounts(false);
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                    try {
+                        String incognitoProfileName = AccountManager.getSafeProfileName(current.id);
+                        if (!Profile.DEFAULT_PROFILE_NAME.equals(incognitoProfileName)) {
+                            ProfileStore.getInstance().deleteProfile(incognitoProfileName);
+                        }
+                    } catch (Exception e) {
+                        Log.w(TAG, "Failed deleting incognito profile", e);
+                    }
+                }
+            }
+        }
+
+        // 2. Set new active account ID in AccountManager
+        accountManager.setActiveAccountId(targetAccountId);
+        final AccountManager.AccountProfile targetProfile = accountManager.getActiveAccount();
+
+        // 3. Cleanly remove and destroy the old WebView
+        if (webView != null) {
+            heartbeatHandler.removeCallbacks(heartbeatRunnable);
+            isGenerating = false;
+
+            webViewContainer.removeView(webView);
+            webView.setWebChromeClient(null);
+            webView.setWebViewClient(null);
+            webView.removeJavascriptInterface(VeniceJsBridge.JS_INTERFACE_NAME);
+            webView.stopLoading();
+            webView.loadUrl("about:blank");
+            webView.clearHistory();
+            webView.removeAllViews();
+            webView.destroy();
+            webView = null;
+        }
+
+        // 4. If MULTI_PROFILE is NOT supported, clear global storage and cookies before recreating
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+            android.webkit.WebStorage.getInstance().deleteAllData();
+            CookieManager.getInstance().removeAllCookies(null);
+            CookieManager.getInstance().flush();
+        }
+
+        // 5. Instantiate a fresh WebView instance
+        WebView newWebView = new WebView(this);
+        newWebView.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        newWebView.setBackgroundColor(getColor(R.color.background_dark));
+
+        // 6. Assign isolated profile BEFORE initializing / loading
+        String profileName = AccountManager.getSafeProfileName(targetAccountId);
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+            try {
+                ProfileStore store = ProfileStore.getInstance();
+                Profile profile = store.getOrCreateProfile(profileName);
+                WebViewCompat.setProfile(newWebView, profileName);
+                Log.i(TAG, "Assigned isolated WebView profile: " + profileName);
+
+                // If target account has saved cookies, inject them into this profile's CookieManager
+                if (!TextUtils.isEmpty(targetProfile.cookies)) {
+                    CookieManager profileCm = profile.getCookieManager();
+                    String[] cookiePairs = targetProfile.cookies.split(";");
+                    for (String c : cookiePairs) {
+                        String trimmed = c.trim();
+                        if (!trimmed.isEmpty()) {
+                            profileCm.setCookie(VENICE_CHAT_URL, trimmed + "; Domain=" + AccountManager.VENICE_DOMAIN + "; Path=/");
+                            profileCm.setCookie("https://venice.ai", trimmed + "; Domain=.venice.ai; Path=/");
+                        }
+                    }
+                    profileCm.flush();
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Failed setting profile on WebView: " + profileName, e);
+            }
+        } else {
+            // Fallback: inject saved cookies into global CookieManager
+            if (!TextUtils.isEmpty(targetProfile.cookies)) {
+                CookieManager cm = CookieManager.getInstance();
+                String[] cookiePairs = targetProfile.cookies.split(";");
+                for (String c : cookiePairs) {
+                    String trimmed = c.trim();
+                    if (!trimmed.isEmpty()) {
+                        cm.setCookie(VENICE_CHAT_URL, trimmed + "; Domain=" + AccountManager.VENICE_DOMAIN + "; Path=/");
+                        cm.setCookie("https://venice.ai", trimmed + "; Domain=.venice.ai; Path=/");
+                    }
+                }
+                cm.flush();
+            }
+        }
+
+        // 7. Configure WebSettings, WebViewClient, WebChromeClient, DownloadListener, JS Interface
+        this.webView = newWebView;
+        setupWebView(newWebView, targetAccountId);
+
+        // 8. Attach new WebView to container
+        webViewContainer.addView(newWebView);
+
+        // 9. Load Venice AI Chat
+        loadVenice();
+
+        if (onReady != null) {
+            onReady.run();
+        }
+    }
+
     private void loadVenice() {
-        webView.loadUrl(VENICE_CHAT_URL);
+        if (webView != null) {
+            webView.loadUrl(VENICE_CHAT_URL);
+        }
     }
 
     private boolean isKeepAliveEnabled() {
@@ -665,7 +787,20 @@ public class MainActivity extends AppCompatActivity {
         View btnClear = dialogView.findViewById(R.id.btn_clear_cache);
         if (btnClear != null) {
             btnClear.setOnClickListener(v -> {
-                webView.clearCache(true);
+                if (webView != null) {
+                    webView.clearCache(true);
+                }
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                    try {
+                        String profileName = AccountManager.getSafeProfileName(accountManager.getActiveAccount().id);
+                        Profile profile = ProfileStore.getInstance().getProfile(profileName);
+                        if (profile != null) {
+                            profile.getWebStorage().deleteAllData();
+                        }
+                    } catch (Exception ignored) {}
+                } else {
+                    android.webkit.WebStorage.getInstance().deleteAllData();
+                }
                 Toast.makeText(MainActivity.this, R.string.cache_cleared, Toast.LENGTH_SHORT).show();
                 dialog.dismiss();
             });
@@ -704,17 +839,11 @@ public class MainActivity extends AppCompatActivity {
                 String msg = String.format(getString(R.string.toast_switching_account), profile.name);
                 Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
 
-                accountManager.switchAccount(webView, profile.id, new AccountManager.SwitchCallback() {
+                switchAccountAndRecreateWebView(profile.id, new Runnable() {
                     @Override
-                    public void onSwitched(AccountManager.AccountProfile targetProfile) {
-                        runOnUiThread(new Runnable() {
-                            @Override
-                            public void run() {
-                                webView.reload();
-                                String activeMsg = String.format(getString(R.string.toast_account_active), targetProfile.name);
-                                Toast.makeText(MainActivity.this, activeMsg, Toast.LENGTH_SHORT).show();
-                            }
-                        });
+                    public void run() {
+                        String activeMsg = String.format(getString(R.string.toast_account_active), profile.name);
+                        Toast.makeText(MainActivity.this, activeMsg, Toast.LENGTH_SHORT).show();
                     }
                 });
             }
@@ -723,11 +852,9 @@ public class MainActivity extends AppCompatActivity {
             public void onAccountDelete(final AccountManager.AccountProfile profile) {
                 if (profile.isIncognito) {
                     accountManager.deleteAccount(profile.id);
-                    CookieManager.getInstance().removeAllCookies(null);
-                    CookieManager.getInstance().flush();
                     Toast.makeText(MainActivity.this, R.string.toast_incognito_purged, Toast.LENGTH_SHORT).show();
                     dialog.dismiss();
-                    webView.reload();
+                    switchAccountAndRecreateWebView(accountManager.getActiveAccount().id, null);
                     return;
                 }
 
@@ -742,7 +869,7 @@ public class MainActivity extends AppCompatActivity {
                                     String delMsg = String.format(getString(R.string.toast_account_deleted), profile.name);
                                     Toast.makeText(MainActivity.this, delMsg, Toast.LENGTH_SHORT).show();
                                     dialog.dismiss();
-                                    webView.reload();
+                                    switchAccountAndRecreateWebView(accountManager.getActiveAccount().id, null);
                                 }
                             }
                         })
@@ -771,16 +898,10 @@ public class MainActivity extends AppCompatActivity {
                     String msg = String.format(getString(R.string.toast_switching_account), incognito.name);
                     Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
 
-                    accountManager.switchAccount(webView, incognito.id, new AccountManager.SwitchCallback() {
+                    switchAccountAndRecreateWebView(incognito.id, new Runnable() {
                         @Override
-                        public void onSwitched(AccountManager.AccountProfile targetProfile) {
-                            runOnUiThread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    webView.reload();
-                                    Toast.makeText(MainActivity.this, R.string.toast_incognito_active, Toast.LENGTH_LONG).show();
-                                }
-                            });
+                        public void run() {
+                            Toast.makeText(MainActivity.this, R.string.toast_incognito_active, Toast.LENGTH_LONG).show();
                         }
                     });
                 }
@@ -816,18 +937,7 @@ public class MainActivity extends AppCompatActivity {
                         final AccountManager.AccountProfile newAcc = accountManager.createAccount(name);
                         String createdMsg = String.format(getString(R.string.toast_account_created), newAcc.name);
                         Toast.makeText(MainActivity.this, createdMsg, Toast.LENGTH_SHORT).show();
-
-                        accountManager.switchAccount(webView, newAcc.id, new AccountManager.SwitchCallback() {
-                            @Override
-                            public void onSwitched(AccountManager.AccountProfile targetProfile) {
-                                runOnUiThread(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        webView.reload();
-                                    }
-                                });
-                            }
-                        });
+                        switchAccountAndRecreateWebView(newAcc.id, null);
                     }
                 })
                 .setNegativeButton(R.string.btn_cancel, null)
@@ -837,17 +947,22 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        webView.onResume();
-        if (isGenerating) {
-            heartbeatHandler.removeCallbacks(heartbeatRunnable);
-            heartbeatHandler.post(heartbeatRunnable);
+        if (webView != null) {
+            webView.onResume();
+            if (isGenerating) {
+                heartbeatHandler.removeCallbacks(heartbeatRunnable);
+                heartbeatHandler.post(heartbeatRunnable);
+            }
+            webView.evaluateJavascript(VeniceJsBridge.getInjectionScript(), null);
         }
-        webView.evaluateJavascript(VeniceJsBridge.getInjectionScript(), null);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        if (webView != null) {
+            webView.onPause();
+        }
         if (accountManager != null && !accountManager.isIncognitoActive()) {
             accountManager.captureActiveCookies();
             accountManager.snapshotAndSaveCurrentSession(webView, new Runnable() {
@@ -883,6 +998,13 @@ public class MainActivity extends AppCompatActivity {
         if (accountManager != null && accountManager.isIncognitoActive()) {
             accountManager.purgeIncognitoAccounts(true);
         }
+        if (webView != null) {
+            if (webViewContainer != null) {
+                webViewContainer.removeView(webView);
+            }
+            webView.destroy();
+            webView = null;
+        }
         super.onDestroy();
     }
 
@@ -907,7 +1029,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_BACK && (event.getFlags() & KeyEvent.FLAG_CANCELED) == 0) {
-            if (webView.canGoBack()) {
+            if (webView != null && webView.canGoBack()) {
                 webView.goBack();
                 return true;
             } else {

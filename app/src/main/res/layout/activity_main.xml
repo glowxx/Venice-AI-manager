@@ -27,8 +27,8 @@
         android:layout_alignParentTop="true"
         android:layout_alignParentBottom="true">
 
-        <WebView
-            android:id="@+id/webview"
+        <FrameLayout
+            android:id="@+id/webview_container"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:background="@color/background_dark" />

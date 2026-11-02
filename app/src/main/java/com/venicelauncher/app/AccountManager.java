@@ -8,6 +8,10 @@ import android.webkit.CookieManager;
 import android.webkit.ValueCallback;
 import android.webkit.WebView;
 
+import androidx.webkit.Profile;
+import androidx.webkit.ProfileStore;
+import androidx.webkit.WebViewFeature;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -91,6 +95,33 @@ public class AccountManager {
 
     public BackupManager getBackupManager() {
         return backupManager;
+    }
+
+    public static String getSafeProfileName(String accountId) {
+        if (accountId == null || accountId.isEmpty() || "profile_default".equals(accountId)) {
+            return Profile.DEFAULT_PROFILE_NAME;
+        }
+        return "acc_" + accountId.replaceAll("[^a-zA-Z0-9_]", "_");
+    }
+
+    public synchronized void setActiveAccountId(String id) {
+        prefs.edit().putString(KEY_ACTIVE_ACCOUNT_ID, id).apply();
+    }
+
+    public CookieManager getCookieManagerForProfile(String accountId) {
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+            try {
+                String profileName = getSafeProfileName(accountId);
+                ProfileStore store = ProfileStore.getInstance();
+                Profile profile = store.getProfile(profileName);
+                if (profile != null) {
+                    return profile.getCookieManager();
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Failed getting profile CookieManager for " + accountId, e);
+            }
+        }
+        return CookieManager.getInstance();
     }
 
     public synchronized String getAccountsJson() {
@@ -203,13 +234,15 @@ public class AccountManager {
     }
 
     public synchronized void captureActiveCookies() {
-        CookieManager cm = CookieManager.getInstance();
+        AccountProfile active = getActiveAccount();
+        if (active == null || active.isIncognito) return;
+
+        CookieManager cm = getCookieManagerForProfile(active.id);
         String cookies = cm.getCookie(VENICE_URL);
         if (TextUtils.isEmpty(cookies)) {
             cookies = cm.getCookie("https://venice.ai");
         }
         if (!TextUtils.isEmpty(cookies)) {
-            AccountProfile active = getActiveAccount();
             if (!cookies.equals(active.cookies)) {
                 active.cookies = cookies;
                 List<AccountProfile> list = getAccounts();
@@ -291,6 +324,33 @@ public class AccountManager {
                     .putInt(KEY_SCHEMA_VERSION, backupData.schemaVersion)
                     .commit();
 
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                try {
+                    ProfileStore store = ProfileStore.getInstance();
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject obj = arr.getJSONObject(i);
+                        String id = obj.optString("id");
+                        String cookies = obj.optString("cookies");
+                        if (!TextUtils.isEmpty(id) && !TextUtils.isEmpty(cookies)) {
+                            String profileName = getSafeProfileName(id);
+                            Profile profile = store.getOrCreateProfile(profileName);
+                            CookieManager cm = profile.getCookieManager();
+                            String[] pairs = cookies.split(";");
+                            for (String pair : pairs) {
+                                String trimmed = pair.trim();
+                                if (!trimmed.isEmpty()) {
+                                    cm.setCookie(VENICE_URL, trimmed + "; Domain=" + VENICE_DOMAIN + "; Path=/");
+                                    cm.setCookie("https://venice.ai", trimmed + "; Domain=.venice.ai; Path=/");
+                                }
+                            }
+                            cm.flush();
+                        }
+                    }
+                } catch (Exception ex) {
+                    Log.w(TAG, "Failed populating restored cookies to profiles", ex);
+                }
+            }
+
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Failed applying restored backup", e);
@@ -348,9 +408,12 @@ public class AccountManager {
         boolean wasActiveIncognito = isIncognitoActive();
         List<AccountProfile> list = getAccounts();
         List<AccountProfile> toKeep = new ArrayList<>();
+        List<AccountProfile> toPurge = new ArrayList<>();
         for (AccountProfile p : list) {
             if (!p.isIncognito) {
                 toKeep.add(p);
+            } else {
+                toPurge.add(p);
             }
         }
 
@@ -363,11 +426,28 @@ public class AccountManager {
             Log.i(TAG, "Purged incognito temporary accounts (" + (list.size() - toKeep.size()) + " removed)");
         }
 
+        // Delete incognito isolated profiles from ProfileStore disk storage
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+            ProfileStore store = ProfileStore.getInstance();
+            for (AccountProfile purged : toPurge) {
+                try {
+                    String profileName = getSafeProfileName(purged.id);
+                    if (!Profile.DEFAULT_PROFILE_NAME.equals(profileName)) {
+                        store.deleteProfile(profileName);
+                        Log.i(TAG, "Deleted incognito ProfileStore profile: " + profileName);
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not delete incognito profile from store: " + purged.id, e);
+                }
+            }
+        }
+
         if (wasActiveIncognito) {
             prefs.edit().putString(KEY_ACTIVE_ACCOUNT_ID, toKeep.get(0).id).apply();
             if (clearActiveCookiesIfActive) {
-                CookieManager.getInstance().removeAllCookies(null);
-                CookieManager.getInstance().flush();
+                CookieManager cm = getCookieManagerForProfile(toKeep.get(0).id);
+                cm.removeAllCookies(null);
+                cm.flush();
             }
         }
     }
@@ -394,6 +474,19 @@ public class AccountManager {
             if (activeId.equals(id)) {
                 AccountProfile newActive = list.get(0);
                 prefs.edit().putString(KEY_ACTIVE_ACCOUNT_ID, newActive.id).apply();
+            }
+
+            // Remove profile from ProfileStore disk storage
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                try {
+                    String profileName = getSafeProfileName(id);
+                    if (!Profile.DEFAULT_PROFILE_NAME.equals(profileName)) {
+                        ProfileStore.getInstance().deleteProfile(profileName);
+                        Log.i(TAG, "Deleted ProfileStore profile: " + profileName);
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not delete profile from store: " + id, e);
+                }
             }
             return true;
         }
