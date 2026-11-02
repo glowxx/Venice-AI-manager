@@ -1,0 +1,25 @@
+# Gradle / Android build outputs
+.gradle/
+build/
+app/build/
+*.dex
+*.class
+
+# Binaries & archives (use GitHub Releases for distribution)
+*.apk
+*.zip
+*.aar
+*.aab
+
+# Local configuration
+local.properties
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+
+# IDE files
+.idea/
+*.iml
+.navigation/
+captures/
