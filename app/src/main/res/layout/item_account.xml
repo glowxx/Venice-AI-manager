@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/account_item_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="8dp"
+    android:background="@drawable/bg_card"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="14dp"
+    android:paddingTop="12dp"
+    android:paddingEnd="8dp"
+    android:paddingBottom="12dp">
+
+    <!-- Active Indicator / Check -->
+    <ImageView
+        android:id="@+id/iv_account_active"
+        android:layout_width="22dp"
+        android:layout_height="22dp"
+        android:contentDescription="Active"
+        android:src="@drawable/ic_check"
+        android:visibility="visible"
+        app:tint="@color/venice_accent" />
+
+    <!-- Account Details -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tv_account_name"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Account 1"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_account_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Active session"
+            android:textColor="@color/status_active"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <!-- Delete Account Button (hidden for current or last remaining account) -->
+    <ImageButton
+        android:id="@+id/btn_delete_account"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@string/btn_delete"
+        android:padding="6dp"
+        android:src="@drawable/ic_delete"
+        app:tint="@color/danger" />
+
+</LinearLayout>

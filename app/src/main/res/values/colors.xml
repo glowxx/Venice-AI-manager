@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background_dark">#0E0E10</color>
+    <color name="surface_dark">#18181B</color>
+    <color name="surface_dark_card">#222226</color>
+    <color name="surface_dark_hover">#2A2A2E</color>
+    <color name="venice_accent">#06B6D4</color>
+    <color name="venice_accent_variant">#0891B2</color>
+    <color name="venice_glow">#22D3EE</color>
+    <color name="venice_purple">#8B5CF6</color>
+    <color name="status_active">#10B981</color>
+    <color name="status_generating">#F59E0B</color>
+    <color name="status_idle">#64748B</color>
+    <color name="text_primary">#F4F4F5</color>
+    <color name="text_secondary">#A1A1AA</color>
+    <color name="text_muted">#71717A</color>
+    <color name="divider">#27272A</color>
+    <color name="danger">#EF4444</color>
+    <color name="black">#000000</color>
+    <color name="white">#FFFFFF</color>
+</resources>

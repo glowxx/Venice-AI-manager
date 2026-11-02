@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Venice AI</string>
+    <string name="default_account_name">Main Account</string>
+    <string name="accounts_manager">Account Manager</string>
+    <string name="accounts_manager_desc">Switch profiles or create a separate Venice AI session.</string>
+    <string name="add_account">Add Account</string>
+    <string name="switch_account">Switch Account</string>
+    <string name="delete_account">Delete Account</string>
+    <string name="rename_account">Rename</string>
+    <string name="active_account_prefix">Active: </string>
+    <string name="dialog_add_account_title">New Account Profile</string>
+    <string name="dialog_add_account_hint">Account name (e.g. Personal, Work, Pro)</string>
+    <string name="dialog_delete_confirm">Are you sure you want to delete profile \"%s\"? All saved session data for this account will be removed.</string>
+    
+    <!-- Background Service -->
+    <string name="bg_channel_name">Venice AI Keep-Alive Service</string>
+    <string name="bg_channel_desc">Keeps AI response streaming active in background</string>
+    <string name="bg_notification_title">Venice AI</string>
+    <string name="bg_notification_generating">Generating response in background...</string>
+    <string name="bg_notification_idle">Background keep-alive active (idle)</string>
+    <string name="bg_completion_title">Venice AI: Response Ready!</string>
+    <string name="bg_completion_desc">AI has finished generating your response. Tap to view.</string>
+    
+    <!-- Controls & Actions -->
+    <string name="btn_refresh">Reload Page</string>
+    <string name="btn_back">Back</string>
+    <string name="btn_forward">Forward</string>
+    <string name="btn_settings">Settings</string>
+    <string name="btn_accounts">Manage Profiles</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="btn_save">Save</string>
+    <string name="btn_delete">Delete</string>
+    <string name="btn_switch">Switch</string>
+    <string name="btn_close">Close</string>
+
+    <!-- Settings Sections -->
+    <string name="settings_title">Launcher Settings</string>
+    <string name="section_account">ACCOUNT PROFILE</string>
+    <string name="section_engine">BACKGROUND ENGINE</string>
+    <string name="section_backup">DATA PERSISTENCE &amp; BACKUPS</string>
+    <string name="section_notifications">ALERTS &amp; FEEDBACK</string>
+    <string name="section_browser">BROWSER &amp; CONTROLS</string>
+    
+    <!-- Settings Items -->
+    <string name="active_profile_label">Active Profile</string>
+    <string name="setting_always_keep_alive">Background Keep-Alive</string>
+    <string name="setting_always_keep_alive_desc">Prevents Android from freezing generation when screen is off or app is minimized</string>
+    <string name="setting_notify_completion">Completion Notification</string>
+    <string name="setting_notify_completion_desc">Display alert when Venice AI finishes writing response</string>
+    <string name="setting_vibration">Haptic Vibration</string>
+    <string name="setting_vibration_desc">Vibrate phone when response completes</string>
+    <string name="setting_pull_refresh">Pull-down to Refresh</string>
+    <string name="setting_pull_refresh_desc">Swipe down from top of chat to reload page</string>
+    <string name="setting_floating_button">Floating Menu Button</string>
+    <string name="setting_floating_button_desc">Draggable button to access settings. If hidden, hold Back button to open.</string>
+    
+    <!-- Backup and Safety -->
+    <string name="backup_auto_status">Auto-Backup: Active (survives app updates)</string>
+    <string name="backup_location_desc">Saved to Documents/VeniceAI_Backups as ZIP archive</string>
+    <string name="btn_export_backup">Export Backup (.zip)</string>
+    <string name="btn_restore_backup">Restore from File (.zip)</string>
+    
+    <string name="setting_clear_cache">Clear Web Cache</string>
+    <string name="setting_reload_page">Reload Venice Page</string>
+    <string name="cache_cleared">Web cache and session cache cleared</string>
+    <string name="app_footer_info">Venice AI Launcher v1.0.4</string>
+    
+    <!-- Status & Toasts -->
+    <string name="status_generating_short">Generating...</string>
+    <string name="status_ready_short">Ready</string>
+    <string name="status_background_on">Background Active</string>
+    <string name="toast_file_chooser_error">Cannot open file chooser</string>
+    <string name="toast_download_started">Downloading file: %s</string>
+    <string name="toast_download_error">Failed to download file</string>
+    <string name="toast_history_start">Start of browsing history</string>
+    <string name="toast_bg_enabled">Background keep-alive: ENABLED</string>
+    <string name="toast_bg_disabled">Background keep-alive: DISABLED</string>
+    <string name="toast_switching_account">Switching to profile: %s...</string>
+    <string name="toast_account_active">Active account: %s</string>
+    <string name="toast_account_deleted">Deleted account: %s</string>
+    <string name="toast_account_created">Created profile: %s</string>
+    <string name="toast_floating_hidden">Floating button hidden. Long-press Back button to open settings.</string>
+    <string name="toast_backup_exported">Backup saved to: %s</string>
+    <string name="toast_backup_export_failed">Failed to export backup archive</string>
+    <string name="toast_backup_restored">Successfully restored %d profile(s)!</string>
+    <string name="toast_backup_restore_failed">Failed to restore backup: invalid format or empty file</string>
+</resources>

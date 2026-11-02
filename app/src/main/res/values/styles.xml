@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.VeniceLauncher" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Primary colors -->
+        <item name="colorPrimary">@color/venice_accent</item>
+        <item name="colorPrimaryVariant">@color/venice_accent_variant</item>
+        <item name="colorOnPrimary">@color/black</item>
+        
+        <!-- Secondary colors -->
+        <item name="colorSecondary">@color/venice_purple</item>
+        <item name="colorSecondaryVariant">@color/venice_purple</item>
+        <item name="colorOnSecondary">@color/white</item>
+        
+        <!-- Backgrounds -->
+        <item name="android:windowBackground">@color/background_dark</item>
+        <item name="android:colorBackground">@color/background_dark</item>
+        <item name="colorSurface">@color/surface_dark</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        
+        <!-- Status bar -->
+        <item name="android:statusBarColor">@color/background_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">#0D1117</item>
+
+        <!-- Material dialog styling -->
+        <item name="materialAlertDialogTheme">@style/VeniceDialogTheme</item>
+        <item name="bottomSheetDialogTheme">@style/VeniceBottomSheetDialogTheme</item>
+    </style>
+
+    <style name="VeniceBottomSheetDialogTheme" parent="Theme.Design.Light.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/VeniceBottomSheetStyle</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:navigationBarColor">#0D1117</item>
+    </style>
+
+    <style name="VeniceBottomSheetStyle" parent="Widget.Design.BottomSheet.Modal">
+        <item name="android:background">@android:color/transparent</item>
+    </style>
+
+    <style name="VeniceDialogTheme" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
+        <item name="colorSurface">@color/surface_dark_card</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="buttonBarPositiveButtonStyle">@style/VeniceDialogButton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/VeniceDialogButtonNegative</item>
+    </style>
+
+    <style name="VeniceDialogButton" parent="Widget.MaterialComponents.Button.TextButton">
+        <item name="android:textColor">@color/venice_accent</item>
+    </style>
+
+    <style name="VeniceDialogButtonNegative" parent="Widget.MaterialComponents.Button.TextButton">
+        <item name="android:textColor">@color/text_secondary</item>
+    </style>
+</resources>
