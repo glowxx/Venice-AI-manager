@@ -1,0 +1,785 @@
+package com.venicelauncher.app;
+
+import android.Manifest;
+import android.annotation.SuppressLint;
+import android.app.DownloadManager;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.InputType;
+import android.util.DisplayMetrics;
+import android.util.Log;
+import android.view.KeyEvent;
+import android.view.LayoutInflater;
+import android.view.MotionEvent;
+import android.view.View;
+import android.webkit.CookieManager;
+import android.webkit.DownloadListener;
+import android.webkit.PermissionRequest;
+import android.webkit.URLUtil;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.activity.result.ActivityResult;
+import androidx.activity.result.ActivityResultCallback;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.SwitchCompat;
+import androidx.core.content.ContextCompat;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
+
+import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+
+import java.io.OutputStream;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+
+public class MainActivity extends AppCompatActivity {
+    private static final String TAG = "VeniceMainActivity";
+    private static final String VENICE_CHAT_URL = "https://venice.ai/chat";
+
+    private WebView webView;
+    private SwipeRefreshLayout swipeRefreshLayout;
+    private ProgressBar progressBar;
+    private FrameLayout fabLauncherMenu;
+
+    private AccountManager accountManager;
+    private VeniceJsBridge veniceJsBridge;
+    private SharedPreferences settingsPrefs;
+
+    private ValueCallback<Uri[]> filePathCallback;
+    private ActivityResultLauncher<Intent> fileChooserLauncher;
+    private ActivityResultLauncher<String> notificationPermissionLauncher;
+    private ActivityResultLauncher<String> exportBackupLauncher;
+    private ActivityResultLauncher<String[]> importBackupLauncher;
+
+    private boolean isGenerating = false;
+    private final Handler heartbeatHandler = new Handler(Looper.getMainLooper());
+    private final Runnable heartbeatRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (isGenerating && webView != null) {
+                // Gentle tick to keep Chromium V8 event loop processing in background without suspension
+                webView.evaluateJavascript("void 0;", null);
+                heartbeatHandler.postDelayed(this, 3000);
+            }
+        }
+    };
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        settingsPrefs = getSharedPreferences("venice_settings", MODE_PRIVATE);
+        accountManager = new AccountManager(this);
+        veniceJsBridge = new VeniceJsBridge(this);
+
+        initViews();
+        setupLaunchers();
+        setupPermissions();
+        setupWebView();
+        setupFloatingMenu();
+
+        // Check if always keep-alive is explicitly active
+        if (isAlwaysKeepAliveEnabled()) {
+            startBackgroundService(BackgroundKeepAliveService.ACTION_START_KEEPALIVE);
+        }
+
+        // Load Venice AI Chat
+        loadVenice();
+    }
+
+    private void initViews() {
+        webView = findViewById(R.id.webview);
+        swipeRefreshLayout = findViewById(R.id.swipe_refresh);
+        progressBar = findViewById(R.id.progress_bar);
+        fabLauncherMenu = findViewById(R.id.fab_launcher_menu);
+
+        swipeRefreshLayout.setColorSchemeColors(getColor(R.color.venice_accent));
+        swipeRefreshLayout.setProgressBackgroundColorSchemeColor(getColor(R.color.surface_dark_card));
+        swipeRefreshLayout.setEnabled(settingsPrefs.getBoolean("pull_refresh", false));
+
+        swipeRefreshLayout.setOnRefreshListener(new SwipeRefreshLayout.OnRefreshListener() {
+            @Override
+            public void onRefresh() {
+                webView.reload();
+            }
+        });
+
+        boolean showFab = settingsPrefs.getBoolean("show_floating_button", true);
+        fabLauncherMenu.setVisibility(showFab ? View.VISIBLE : View.GONE);
+    }
+
+    private void setupLaunchers() {
+        // Web file chooser launcher
+        fileChooserLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                new ActivityResultCallback<ActivityResult>() {
+                    @Override
+                    public void onActivityResult(ActivityResult result) {
+                        if (filePathCallback == null) return;
+
+                        Uri[] results = null;
+                        if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                            if (result.getData().getClipData() != null) {
+                                int count = result.getData().getClipData().getItemCount();
+                                results = new Uri[count];
+                                for (int i = 0; i < count; i++) {
+                                    results[i] = result.getData().getClipData().getItemAt(i).getUri();
+                                }
+                            } else if (result.getData().getData() != null) {
+                                results = new Uri[]{result.getData().getData()};
+                            }
+                        }
+                        filePathCallback.onReceiveValue(results);
+                        filePathCallback = null;
+                    }
+                }
+        );
+
+        // Export backup to custom location chosen by user (ZIP archive)
+        exportBackupLauncher = registerForActivityResult(
+                new ActivityResultContracts.CreateDocument("application/zip"),
+                new ActivityResultCallback<Uri>() {
+                    @Override
+                    public void onActivityResult(Uri uri) {
+                        if (uri != null) {
+                            try (OutputStream os = getContentResolver().openOutputStream(uri)) {
+                                String accountsJson = accountManager.getAccountsJson();
+                                String activeId = accountManager.getActiveAccount().id;
+                                boolean success = accountManager.getBackupManager().createZipBackup(accountsJson, activeId, os);
+                                if (success) {
+                                    Toast.makeText(MainActivity.this, "Backup archive (.zip) exported successfully!", Toast.LENGTH_SHORT).show();
+                                } else {
+                                    Toast.makeText(MainActivity.this, R.string.toast_backup_export_failed, Toast.LENGTH_SHORT).show();
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "Failed writing exported backup", e);
+                                Toast.makeText(MainActivity.this, "Export failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                            }
+                        }
+                    }
+                }
+        );
+
+        // Restore backup from chosen ZIP or JSON file
+        importBackupLauncher = registerForActivityResult(
+                new ActivityResultContracts.OpenDocument(),
+                new ActivityResultCallback<Uri>() {
+                    @Override
+                    public void onActivityResult(Uri uri) {
+                        if (uri != null) {
+                            BackupManager.BackupData data = accountManager.getBackupManager().readBackupFromUri(uri);
+                            if (data != null && accountManager.restoreFromBackup(data)) {
+                                int count = accountManager.getAccounts().size();
+                                String msg = String.format(getString(R.string.toast_backup_restored), count);
+                                Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
+
+                                // Immediately apply restored cookies and storage to WebView
+                                accountManager.applyActiveAccountToWebView(webView, new AccountManager.SwitchCallback() {
+                                    @Override
+                                    public void onSwitched(AccountManager.AccountProfile targetProfile) {
+                                        runOnUiThread(new Runnable() {
+                                            @Override
+                                            public void run() {
+                                                webView.reload();
+                                            }
+                                        });
+                                    }
+                                });
+                            } else {
+                                Toast.makeText(MainActivity.this, R.string.toast_backup_restore_failed, Toast.LENGTH_LONG).show();
+                            }
+                        }
+                    }
+                }
+        );
+    }
+
+    private void setupFloatingMenu() {
+        fabLauncherMenu.setOnTouchListener(new View.OnTouchListener() {
+            private float dX, dY;
+            private float startX, startY;
+            private static final int CLICK_ACTION_THRESHOLD = 15; // px
+
+            @Override
+            public boolean onTouch(View view, MotionEvent event) {
+                switch (event.getAction()) {
+                    case MotionEvent.ACTION_DOWN:
+                        dX = view.getX() - event.getRawX();
+                        dY = view.getY() - event.getRawY();
+                        startX = event.getRawX();
+                        startY = event.getRawY();
+                        view.setAlpha(1.0f);
+                        return true;
+
+                    case MotionEvent.ACTION_MOVE:
+                        float newX = event.getRawX() + dX;
+                        float newY = event.getRawY() + dY;
+
+                        View parent = (View) view.getParent();
+                        if (parent != null) {
+                            int parentWidth = parent.getWidth();
+                            int parentHeight = parent.getHeight();
+                            newX = Math.max(0, Math.min(newX, parentWidth - view.getWidth()));
+                            newY = Math.max(0, Math.min(newY, parentHeight - view.getHeight()));
+                            view.setX(newX);
+                            view.setY(newY);
+                        }
+                        return true;
+
+                    case MotionEvent.ACTION_UP:
+                        view.setAlpha(0.65f);
+                        float diffX = Math.abs(event.getRawX() - startX);
+                        float diffY = Math.abs(event.getRawY() - startY);
+
+                        if (diffX < CLICK_ACTION_THRESHOLD && diffY < CLICK_ACTION_THRESHOLD) {
+                            showLauncherSettingsDialog();
+                        } else {
+                            // Snap to nearest edge (left or right)
+                            View p = (View) view.getParent();
+                            if (p != null) {
+                                int pWidth = p.getWidth();
+                                float margin = dpToPx(12);
+                                float targetX = (view.getX() + view.getWidth() / 2f > pWidth / 2f)
+                                        ? (pWidth - view.getWidth() - margin)
+                                        : margin;
+                                view.animate().x(targetX).setDuration(200).start();
+                            }
+                        }
+                        return true;
+                }
+                return false;
+            }
+        });
+    }
+
+    private float dpToPx(float dp) {
+        DisplayMetrics metrics = getResources().getDisplayMetrics();
+        return dp * (metrics.densityDpi / 160f);
+    }
+
+    private void setupPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher = registerForActivityResult(
+                    new ActivityResultContracts.RequestPermission(),
+                    new ActivityResultCallback<Boolean>() {
+                        @Override
+                        public void onActivityResult(Boolean isGranted) {
+                            Log.d(TAG, "Notification permission: " + isGranted);
+                        }
+                    }
+            );
+
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS);
+            }
+        }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private void setupWebView() {
+        WebSettings ws = webView.getSettings();
+        ws.setJavaScriptEnabled(true);
+        ws.setDomStorageEnabled(true);
+        ws.setDatabaseEnabled(true);
+        ws.setLoadWithOverviewMode(true);
+        ws.setUseWideViewPort(true);
+        ws.setBuiltInZoomControls(true);
+        ws.setDisplayZoomControls(false);
+        ws.setSupportZoom(true);
+        ws.setAllowFileAccess(true);
+        ws.setAllowContentAccess(true);
+        ws.setMediaPlaybackRequiresUserGesture(false);
+        ws.setCacheMode(WebSettings.LOAD_DEFAULT);
+        ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+
+        // Modern Mobile Chrome user agent
+        String customUA = ws.getUserAgentString() + " VeniceLauncher/1.0.4 Mobile";
+        ws.setUserAgentString(customUA);
+
+        // Enable cookies
+        CookieManager.getInstance().setAcceptCookie(true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+
+        // Add JavaScript bridge for generation state detection
+        webView.addJavascriptInterface(veniceJsBridge, VeniceJsBridge.JS_INTERFACE_NAME);
+        veniceJsBridge.setStateListener(new VeniceJsBridge.GenerationStateListener() {
+            @Override
+            public void onGenerationStateChanged(final boolean generating) {
+                isGenerating = generating;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (generating) {
+                            heartbeatHandler.removeCallbacks(heartbeatRunnable);
+                            heartbeatHandler.post(heartbeatRunnable);
+                        } else {
+                            heartbeatHandler.removeCallbacks(heartbeatRunnable);
+                        }
+                    }
+                });
+            }
+        });
+
+        // WebViewClient
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String url = request.getUrl().toString();
+                if (url.startsWith("https://venice.ai") || url.startsWith("https://chat.venice.ai")) {
+                    return false; // Load inside WebView
+                }
+                // External link, open in browser
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                    startActivity(intent);
+                    return true;
+                } catch (Exception e) {
+                    Log.e(TAG, "Cannot open external URL: " + url, e);
+                    return false;
+                }
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                progressBar.setVisibility(View.VISIBLE);
+                // DO NOT wipe localStorage here! Let Chromium keep active session intact.
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                progressBar.setVisibility(View.GONE);
+                swipeRefreshLayout.setRefreshing(false);
+
+                // Inject background generation detector
+                webView.evaluateJavascript(VeniceJsBridge.getInjectionScript(), null);
+
+                // Flush active cookies and snapshot them to active profile
+                CookieManager.getInstance().flush();
+                accountManager.captureActiveCookies();
+            }
+        });
+
+        // WebChromeClient
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onProgressChanged(WebView view, int newProgress) {
+                if (newProgress < 100) {
+                    progressBar.setVisibility(View.VISIBLE);
+                    progressBar.setProgress(newProgress);
+                } else {
+                    progressBar.setVisibility(View.GONE);
+                }
+                if (newProgress >= 70) {
+                    view.evaluateJavascript(VeniceJsBridge.getInjectionScript(), null);
+                }
+            }
+
+            @Override
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+                if (MainActivity.this.filePathCallback != null) {
+                    MainActivity.this.filePathCallback.onReceiveValue(null);
+                }
+                MainActivity.this.filePathCallback = filePathCallback;
+
+                Intent intent = fileChooserParams.createIntent();
+                try {
+                    fileChooserLauncher.launch(intent);
+                } catch (Exception e) {
+                    MainActivity.this.filePathCallback = null;
+                    Toast.makeText(MainActivity.this, R.string.toast_file_chooser_error, Toast.LENGTH_SHORT).show();
+                    return false;
+                }
+                return true;
+            }
+
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                request.grant(request.getResources());
+            }
+        });
+
+        // Download Listener for generated images / attachments
+        webView.setDownloadListener(new DownloadListener() {
+            @Override
+            public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimeType, long contentLength) {
+                try {
+                    DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                    request.setMimeType(mimeType);
+                    String filename = URLUtil.guessFileName(url, contentDisposition, mimeType);
+                    request.setDescription("Downloading image from Venice AI...");
+                    request.setTitle(filename);
+                    request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename);
+
+                    DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+                    if (dm != null) {
+                        dm.enqueue(request);
+                        String msg = String.format(getString(R.string.toast_download_started), filename);
+                        Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Download error", e);
+                    Toast.makeText(MainActivity.this, R.string.toast_download_error, Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+    }
+
+    private void loadVenice() {
+        webView.loadUrl(VENICE_CHAT_URL);
+    }
+
+    private boolean isAlwaysKeepAliveEnabled() {
+        return settingsPrefs.getBoolean("always_keep_alive", false);
+    }
+
+    private void startBackgroundService(String action) {
+        Intent intent = new Intent(this, BackgroundKeepAliveService.class);
+        intent.setAction(action);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
+    }
+
+    private void showLauncherSettingsDialog() {
+        final BottomSheetDialog dialog = new BottomSheetDialog(this, R.style.VeniceBottomSheetDialogTheme);
+        View dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_settings, null);
+        dialog.setContentView(dialogView);
+
+        // Active Account Display
+        TextView tvActiveAccName = dialogView.findViewById(R.id.tv_active_account_name);
+        AccountManager.AccountProfile active = accountManager.getActiveAccount();
+        if (active != null) {
+            tvActiveAccName.setText(active.name);
+        }
+
+        // Manage Accounts Button
+        dialogView.findViewById(R.id.btn_manage_accounts).setOnClickListener(v -> {
+            dialog.dismiss();
+            showAccountsDialog();
+        });
+
+        // Quick Add Account Button
+        dialogView.findViewById(R.id.btn_quick_add_account).setOnClickListener(v -> {
+            dialog.dismiss();
+            showAddAccountDialog();
+        });
+
+        // Background Keep-Alive Switch (Anti-Freeze)
+        SwitchCompat swKeepAlive = dialogView.findViewById(R.id.switch_keep_alive);
+        swKeepAlive.setChecked(settingsPrefs.getBoolean("always_keep_alive", false));
+        swKeepAlive.setOnCheckedChangeListener((btn, isChecked) -> {
+            settingsPrefs.edit().putBoolean("always_keep_alive", isChecked).apply();
+            if (isChecked) {
+                startBackgroundService(BackgroundKeepAliveService.ACTION_START_KEEPALIVE);
+                Toast.makeText(MainActivity.this, R.string.toast_bg_enabled, Toast.LENGTH_SHORT).show();
+            } else {
+                if (!isGenerating) {
+                    startBackgroundService(BackgroundKeepAliveService.ACTION_STOP_KEEPALIVE);
+                }
+                Toast.makeText(MainActivity.this, R.string.toast_bg_disabled, Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        // Export Backup Button (ZIP archive with cookies and localStorage)
+        dialogView.findViewById(R.id.btn_export_backup).setOnClickListener(v -> {
+            accountManager.snapshotAndSaveCurrentSession(webView, new Runnable() {
+                @Override
+                public void run() {
+                    accountManager.getBackupManager().performAutoBackup(
+                            accountManager.getAccountsJson(),
+                            accountManager.getActiveAccount().id
+                    );
+                    String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+                    exportBackupLauncher.launch("venice_backup_" + timeStamp + ".zip");
+                }
+            });
+        });
+
+        // Restore Backup Button (supports .zip and legacy .json)
+        dialogView.findViewById(R.id.btn_restore_backup).setOnClickListener(v -> {
+            dialog.dismiss();
+            importBackupLauncher.launch(new String[]{
+                    "application/zip",
+                    "application/x-zip-compressed",
+                    "application/octet-stream",
+                    "application/json",
+                    "*/*"
+            });
+        });
+
+        // Notification Switch
+        SwitchCompat swNotify = dialogView.findViewById(R.id.switch_notify_completion);
+        swNotify.setChecked(settingsPrefs.getBoolean("notify_completion", true));
+        swNotify.setOnCheckedChangeListener((btn, isChecked) ->
+                settingsPrefs.edit().putBoolean("notify_completion", isChecked).apply());
+
+        // Vibration Switch
+        SwitchCompat swVibrate = dialogView.findViewById(R.id.switch_vibration);
+        swVibrate.setChecked(settingsPrefs.getBoolean("vibrate_completion", true));
+        swVibrate.setOnCheckedChangeListener((btn, isChecked) ->
+                settingsPrefs.edit().putBoolean("vibrate_completion", isChecked).apply());
+
+        // Pull to refresh Switch
+        SwitchCompat swPullRefresh = dialogView.findViewById(R.id.switch_pull_refresh);
+        swPullRefresh.setChecked(settingsPrefs.getBoolean("pull_refresh", false));
+        swPullRefresh.setOnCheckedChangeListener((btn, isChecked) -> {
+            settingsPrefs.edit().putBoolean("pull_refresh", isChecked).apply();
+            swipeRefreshLayout.setEnabled(isChecked);
+        });
+
+        // Floating Menu Button Switch
+        SwitchCompat swFloating = dialogView.findViewById(R.id.switch_floating_button);
+        swFloating.setChecked(settingsPrefs.getBoolean("show_floating_button", true));
+        swFloating.setOnCheckedChangeListener((btn, isChecked) -> {
+            settingsPrefs.edit().putBoolean("show_floating_button", isChecked).apply();
+            fabLauncherMenu.setVisibility(isChecked ? View.VISIBLE : View.GONE);
+            if (!isChecked) {
+                Toast.makeText(MainActivity.this, R.string.toast_floating_hidden, Toast.LENGTH_LONG).show();
+            }
+        });
+
+        // Reload Page Button
+        dialogView.findViewById(R.id.btn_reload_page).setOnClickListener(v -> {
+            webView.reload();
+            dialog.dismiss();
+        });
+
+        // Clear Cache Button
+        dialogView.findViewById(R.id.btn_clear_cache).setOnClickListener(v -> {
+            webView.clearCache(true);
+            Toast.makeText(MainActivity.this, R.string.cache_cleared, Toast.LENGTH_SHORT).show();
+            dialog.dismiss();
+        });
+
+        // Close Button
+        dialogView.findViewById(R.id.btn_close_settings).setOnClickListener(v -> dialog.dismiss());
+
+        dialog.show();
+    }
+
+    private void showAccountsDialog() {
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(this, R.style.VeniceDialogTheme);
+        View dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_accounts, null);
+        builder.setView(dialogView);
+
+        final AlertDialog dialog = builder.create();
+
+        RecyclerView rvAccounts = dialogView.findViewById(R.id.rv_accounts);
+        rvAccounts.setLayoutManager(new LinearLayoutManager(this));
+
+        final List<AccountManager.AccountProfile> accounts = accountManager.getAccounts();
+        final String activeId = accountManager.getActiveAccount().id;
+
+        AccountsAdapter adapter = new AccountsAdapter(accounts, activeId, new AccountsAdapter.OnAccountClickListener() {
+            @Override
+            public void onAccountSelected(AccountManager.AccountProfile profile) {
+                if (profile.id.equals(activeId)) {
+                    dialog.dismiss();
+                    return;
+                }
+                dialog.dismiss();
+                String msg = String.format(getString(R.string.toast_switching_account), profile.name);
+                Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
+
+                accountManager.switchAccount(webView, profile.id, new AccountManager.SwitchCallback() {
+                    @Override
+                    public void onSwitched(AccountManager.AccountProfile targetProfile) {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                webView.reload();
+                                String activeMsg = String.format(getString(R.string.toast_account_active), targetProfile.name);
+                                Toast.makeText(MainActivity.this, activeMsg, Toast.LENGTH_SHORT).show();
+                            }
+                        });
+                    }
+                });
+            }
+
+            @Override
+            public void onAccountDelete(final AccountManager.AccountProfile profile) {
+                new MaterialAlertDialogBuilder(MainActivity.this, R.style.VeniceDialogTheme)
+                        .setTitle(R.string.delete_account)
+                        .setMessage(getString(R.string.dialog_delete_confirm, profile.name))
+                        .setPositiveButton(R.string.btn_delete, new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface d, int which) {
+                                boolean deleted = accountManager.deleteAccount(profile.id);
+                                if (deleted) {
+                                    String delMsg = String.format(getString(R.string.toast_account_deleted), profile.name);
+                                    Toast.makeText(MainActivity.this, delMsg, Toast.LENGTH_SHORT).show();
+                                    dialog.dismiss();
+                                    webView.reload();
+                                }
+                            }
+                        })
+                        .setNegativeButton(R.string.btn_cancel, null)
+                        .show();
+            }
+        });
+
+        rvAccounts.setAdapter(adapter);
+
+        dialogView.findViewById(R.id.btn_add_account).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                dialog.dismiss();
+                showAddAccountDialog();
+            }
+        });
+
+        dialog.show();
+    }
+
+    private void showAddAccountDialog() {
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        input.setHint(R.string.dialog_add_account_hint);
+        input.setTextColor(getColor(R.color.text_primary));
+        input.setHintTextColor(getColor(R.color.text_muted));
+
+        int padding = (int) (18 * getResources().getDisplayMetrics().density);
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(padding, padding / 2, padding, padding / 2);
+        container.addView(input);
+
+        new MaterialAlertDialogBuilder(this, R.style.VeniceDialogTheme)
+                .setTitle(R.string.dialog_add_account_title)
+                .setView(container)
+                .setPositiveButton(R.string.btn_save, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int which) {
+                        String name = input.getText().toString().trim();
+                        if (name.isEmpty()) {
+                            name = "Account " + (accountManager.getAccounts().size() + 1);
+                        }
+                        final AccountManager.AccountProfile newAcc = accountManager.createAccount(name);
+                        String createdMsg = String.format(getString(R.string.toast_account_created), newAcc.name);
+                        Toast.makeText(MainActivity.this, createdMsg, Toast.LENGTH_SHORT).show();
+
+                        accountManager.switchAccount(webView, newAcc.id, new AccountManager.SwitchCallback() {
+                            @Override
+                            public void onSwitched(AccountManager.AccountProfile targetProfile) {
+                                runOnUiThread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        webView.reload();
+                                    }
+                                });
+                            }
+                        });
+                    }
+                })
+                .setNegativeButton(R.string.btn_cancel, null)
+                .show();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        webView.onResume();
+        if (isGenerating) {
+            heartbeatHandler.removeCallbacks(heartbeatRunnable);
+            heartbeatHandler.post(heartbeatRunnable);
+        }
+        webView.evaluateJavascript(VeniceJsBridge.getInjectionScript(), null);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        accountManager.captureActiveCookies();
+        // Do NOT pause webview timers!
+        if (isGenerating) {
+            startBackgroundService(BackgroundKeepAliveService.ACTION_GENERATION_STARTED);
+            Log.d(TAG, "Activity onPause: Generating in background, KeepAlive started");
+        } else if (isAlwaysKeepAliveEnabled()) {
+            startBackgroundService(BackgroundKeepAliveService.ACTION_START_KEEPALIVE);
+            Log.d(TAG, "Activity onPause: AlwaysKeepAlive enabled");
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (isGenerating) {
+            startBackgroundService(BackgroundKeepAliveService.ACTION_GENERATION_STARTED);
+        } else if (isAlwaysKeepAliveEnabled()) {
+            startBackgroundService(BackgroundKeepAliveService.ACTION_START_KEEPALIVE);
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        heartbeatHandler.removeCallbacks(heartbeatRunnable);
+        super.onDestroy();
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            event.startTracking();
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyLongPress(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            showLauncherSettingsDialog();
+            return true;
+        }
+        return super.onKeyLongPress(keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_BACK && (event.getFlags() & KeyEvent.FLAG_CANCELED) == 0) {
+            if (webView.canGoBack()) {
+                webView.goBack();
+                return true;
+            } else {
+                showLauncherSettingsDialog();
+                return true;
+            }
+        }
+        return super.onKeyUp(keyCode, event);
+    }
+}
