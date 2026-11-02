@@ -1,12 +1,32 @@
 # Venice AI Manager for Android
 
 [![Platform](https://img.shields.io/badge/Platform-Android%208.0%2B%20(API%2026--34)-green.svg)](https://android.com)
-[![Version](https://img.shields.io/badge/Version-1.0.4-blue.svg)](https://github.com/glowxx/Venice-AI-manager/releases)
+[![Version](https://img.shields.io/badge/Version-1.0.5-blue.svg)](https://github.com/glowxx/Venice-AI-manager/releases)
 [![License](https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg)](LICENSE)
 
 A native Android wrapper, session manager, and background generation runner for [Venice.ai](https://venice.ai).
 
-Standard mobile browsers suspend background JavaScript processing when the app is minimized or the screen turns off, terminating long-running AI stream generation and losing context. Furthermore, managing multiple Venice AI accounts requires tedious logout/login cycles. **Venice AI Manager** solves these issues with native background execution and isolated profile switching.
+Standard mobile browsers suspend background JavaScript processing when the app is minimized or the screen turns off, terminating long-running AI stream generation and losing context. Furthermore, managing multiple Venice AI accounts requires tedious logout/login cycles. **Venice AI Manager** solves these issues with generation-only background execution, isolated profile switching, authentic Venice.ai aesthetics, and live automatic backups.
+
+---
+
+## What's New in v1.0.5
+
+1. **Keep-Alive Strictly During Active Generation**:
+   - The background keep-alive service runs **only** while Venice AI is actively generating responses or rendering images.
+   - The moment generation completes, the wake lock is released, completion notifications fire, and the background service shuts down immediately.
+   - Zero background battery drain while idle.
+2. **Authentic Venice.ai Design Language**:
+   - Completely redesigned settings and profile dialogs using official Venice.ai color tokens:
+     - Deep Sea (`#06090D`) & Midnight Blue (`#0E1217`) surfaces
+     - Stucco Light (`#EEEDE4`) typography
+     - Stucco Sand Gold (`#BEA989`) section headers and badges
+     - Ocean Accent (`#125DA3`) buttons
+   - Eliminates generic clutter and "AI aesthetic" in favor of sleek, minimalist editorial styling.
+3. **Continuous Live Auto-Backup with Custom Folder Selection**:
+   - Choose any folder on your device (SD Card, Downloads, Documents, etc.) via Android's Storage Access Framework (`OpenDocumentTree`).
+   - Automatically writes a complete `.zip` backup (`manifest.json`, `accounts.json`, `cookies/`, `storage/`) whenever profiles, cookies, or sessions update.
+   - Includes automatic rotation of timestamped archives (preserves latest 5).
 
 ---
 
@@ -20,13 +40,13 @@ Standard mobile browsers suspend background JavaScript processing when the app i
   - Browser `sessionStorage`
 - Never get logged out or forced through repeated 2FA/login screens when switching accounts.
 
-### 2. Background Keep-Alive Engine (`BackgroundKeepAliveService`)
-- Real-time DOM and SSE stream observer (`VeniceJsBridge`) detects when Venice AI is actively generating responses or rendering artwork.
-- Automatically acquires a `PARTIAL_WAKE_LOCK` and engages an Android Foreground Service with low-priority notification to prevent Chromium V8 throttling.
+### 2. Task-Bound Background Keep-Alive Engine (`BackgroundKeepAliveService`)
+- Real-time DOM and SSE stream observer (`VeniceJsBridge`) detects when Venice AI is actively generating responses.
+- Automatically acquires a `PARTIAL_WAKE_LOCK` and engages an Android Foreground Service during stream generation.
 - Completion alerts: Plays haptic vibration and displays a system notification when the AI finishes writing.
 
 ### 3. ZIP-Based Complete Backup & Restore System (`BackupManager`)
-- **Full ZIP Export**: Packages all accounts, live session cookies, and local storage into an encrypted/standard `.zip` archive:
+- **Full ZIP Export**: Packages all accounts, live session cookies, and local storage into a standard `.zip` archive:
   ```text
   venice_backup_YYYYMMDD_HHMMSS.zip
   ├── manifest.json              # Schema version 3, account summary, active ID, timestamp
@@ -35,8 +55,8 @@ Standard mobile browsers suspend background JavaScript processing when the app i
   ├── storage/                   # LocalStorage & SessionStorage snapshots per profile
   └── README.txt                 # Archive information
   ```
-- **Automatic Background Backup**: Rotated automated backups (keeps latest 5) are mirrored to internal storage and public `Documents/VeniceAI_Backups/` to survive updates and reinstalls.
-- **Instant Restore**: Restoring from a backup archive immediately injects cookies, restores storage, and logs into your accounts without manual login.
+- **Custom Location & Live Sync**: Point auto-backup to any folder. Backups trigger automatically on cookie updates, profile changes, and when minimizing the app.
+- **Instant Restore**: Restoring from a backup archive immediately injects cookies, restores storage, and re-authenticates without manual login.
 
 ### 4. Native Android Integration
 - **File Attachments**: Web file chooser supporting camera capture and gallery selection for vision and prompt attachments.
