@@ -152,18 +152,14 @@ public class AccountManager {
     }
 
     private void ensureDefaultAccount() {
-        // Automatically purge any stale incognito temporary accounts from previous sessions
-        purgeIncognitoAccounts(true);
+        try {
+            purgeIncognitoAccounts(true);
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed purging incognito accounts on init", t);
+        }
 
         List<AccountProfile> list = getAccounts();
         if (list.isEmpty()) {
-            BackupManager.BackupData existing = backupManager.getLatestExistingBackup();
-            if (existing != null && !TextUtils.isEmpty(existing.accountsJson) && !existing.accountsJson.equals("[]")) {
-                Log.i(TAG, "Restoring accounts from discovered previous backup file");
-                restoreFromBackup(existing);
-                return;
-            }
-
             AccountProfile defaultProfile = new AccountProfile(
                     "profile_default",
                     context.getString(R.string.default_account_name),
@@ -369,8 +365,14 @@ public class AccountManager {
         if (!list.isEmpty()) {
             return list.get(0);
         }
-        ensureDefaultAccount();
-        return getAccounts().get(0);
+        AccountProfile defaultProfile = new AccountProfile(
+                "profile_default",
+                context.getString(R.string.default_account_name),
+                System.currentTimeMillis()
+        );
+        list.add(defaultProfile);
+        saveAccountsList(list);
+        return defaultProfile;
     }
 
     public synchronized boolean isIncognitoActive() {
@@ -405,50 +407,62 @@ public class AccountManager {
     }
 
     public synchronized void purgeIncognitoAccounts(boolean clearActiveCookiesIfActive) {
-        boolean wasActiveIncognito = isIncognitoActive();
-        List<AccountProfile> list = getAccounts();
-        List<AccountProfile> toKeep = new ArrayList<>();
-        List<AccountProfile> toPurge = new ArrayList<>();
-        for (AccountProfile p : list) {
-            if (!p.isIncognito) {
-                toKeep.add(p);
-            } else {
-                toPurge.add(p);
-            }
-        }
-
-        if (toKeep.isEmpty()) {
-            toKeep.add(new AccountProfile("profile_default", context.getString(R.string.default_account_name), System.currentTimeMillis()));
-        }
-
-        if (list.size() != toKeep.size()) {
-            saveAccountsList(toKeep);
-            Log.i(TAG, "Purged incognito temporary accounts (" + (list.size() - toKeep.size()) + " removed)");
-        }
-
-        // Delete incognito isolated profiles from ProfileStore disk storage
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
-            ProfileStore store = ProfileStore.getInstance();
-            for (AccountProfile purged : toPurge) {
-                try {
-                    String profileName = getSafeProfileName(purged.id);
-                    if (!Profile.DEFAULT_PROFILE_NAME.equals(profileName)) {
-                        store.deleteProfile(profileName);
-                        Log.i(TAG, "Deleted incognito ProfileStore profile: " + profileName);
-                    }
-                } catch (Exception e) {
-                    Log.w(TAG, "Could not delete incognito profile from store: " + purged.id, e);
+        try {
+            boolean wasActiveIncognito = isIncognitoActive();
+            List<AccountProfile> list = getAccounts();
+            List<AccountProfile> toKeep = new ArrayList<>();
+            List<AccountProfile> toPurge = new ArrayList<>();
+            for (AccountProfile p : list) {
+                if (!p.isIncognito) {
+                    toKeep.add(p);
+                } else {
+                    toPurge.add(p);
                 }
             }
-        }
 
-        if (wasActiveIncognito) {
-            prefs.edit().putString(KEY_ACTIVE_ACCOUNT_ID, toKeep.get(0).id).apply();
-            if (clearActiveCookiesIfActive) {
-                CookieManager cm = getCookieManagerForProfile(toKeep.get(0).id);
-                cm.removeAllCookies(null);
-                cm.flush();
+            if (toKeep.isEmpty()) {
+                toKeep.add(new AccountProfile("profile_default", context.getString(R.string.default_account_name), System.currentTimeMillis()));
             }
+
+            if (list.size() != toKeep.size()) {
+                saveAccountsList(toKeep);
+                Log.i(TAG, "Purged incognito temporary accounts (" + (list.size() - toKeep.size()) + " removed)");
+            }
+
+            // Delete incognito isolated profiles from ProfileStore disk storage
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                try {
+                    ProfileStore store = ProfileStore.getInstance();
+                    for (AccountProfile purged : toPurge) {
+                        try {
+                            String profileName = getSafeProfileName(purged.id);
+                            if (!Profile.DEFAULT_PROFILE_NAME.equals(profileName)) {
+                                store.deleteProfile(profileName);
+                                Log.i(TAG, "Deleted incognito ProfileStore profile: " + profileName);
+                            }
+                        } catch (Throwable e) {
+                            Log.w(TAG, "Could not delete incognito profile from store: " + purged.id, e);
+                        }
+                    }
+                } catch (Throwable e) {
+                    Log.w(TAG, "ProfileStore unavailable during purge", e);
+                }
+            }
+
+            if (wasActiveIncognito && !toKeep.isEmpty()) {
+                prefs.edit().putString(KEY_ACTIVE_ACCOUNT_ID, toKeep.get(0).id).apply();
+                if (clearActiveCookiesIfActive) {
+                    try {
+                        CookieManager cm = getCookieManagerForProfile(toKeep.get(0).id);
+                        cm.removeAllCookies(null);
+                        cm.flush();
+                    } catch (Throwable t) {
+                        Log.w(TAG, "Failed clearing cookies for active profile", t);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "Error in purgeIncognitoAccounts", t);
         }
     }
 

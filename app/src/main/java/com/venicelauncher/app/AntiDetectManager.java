@@ -8,7 +8,9 @@ import androidx.webkit.WebSettingsCompat;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Set;
 
 /**
@@ -162,26 +164,41 @@ public class AntiDetectManager {
      * - Registers document-start script (Chromium WebKit API)
      */
     public static void applyAntiDetect(WebView wv, String accountId, boolean isIncognito) {
+        if (wv == null) return;
+
         try {
             WebSettings ws = wv.getSettings();
             String cleanUa = sanitizeUserAgent(ws.getUserAgentString());
             ws.setUserAgentString(cleanUa);
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed setting sanitized user agent", t);
+        }
 
+        try {
             // Suppress X-Requested-With header
             if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
-                Set<String> emptySet = Collections.emptySet();
-                WebSettingsCompat.setRequestedWithHeaderOriginAllowList(ws, emptySet);
+                WebSettings ws = wv.getSettings();
+                WebSettingsCompat.setRequestedWithHeaderOriginAllowList(ws, Collections.<String>emptySet());
             }
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed suppressing X-Requested-With header", t);
+        }
 
+        try {
             int seed = getProfileSeed(accountId, isIncognito);
             String script = buildAntiDetectScript(seed);
 
             // Run at document-start before any page JavaScript executes
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-                WebViewCompat.addDocumentStartJavaScript(wv, script, Collections.singleton("*"));
+                Set<String> origins = new HashSet<>(Arrays.asList(
+                        "https://venice.ai",
+                        "https://*.venice.ai",
+                        "https://chat.venice.ai"
+                ));
+                WebViewCompat.addDocumentStartJavaScript(wv, script, origins);
             }
-        } catch (Exception e) {
-            Log.e(TAG, "Failed applying anti-detect settings", e);
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed applying document-start script", t);
         }
     }
 }

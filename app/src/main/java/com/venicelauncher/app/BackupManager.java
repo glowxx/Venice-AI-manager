@@ -122,23 +122,35 @@ public class BackupManager {
     }
 
     public File getPrimaryBackupDirectory() {
-        File dir = context.getExternalFilesDir("backups");
-        if (dir == null) {
-            dir = new File(context.getFilesDir(), "backups");
+        try {
+            File dir = context.getExternalFilesDir("backups");
+            if (dir == null) {
+                dir = new File(context.getFilesDir(), "backups");
+            }
+            if (!dir.exists()) {
+                dir.mkdirs();
+            }
+            return dir;
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed creating primary backup directory", t);
+            return context.getFilesDir();
         }
-        if (!dir.exists()) {
-            dir.mkdirs();
-        }
-        return dir;
     }
 
     public File getPublicDocumentsBackupDirectory() {
-        File publicDocs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS);
-        File dir = new File(publicDocs, "VeniceAI_Backups");
-        if (!dir.exists()) {
-            dir.mkdirs();
+        try {
+            File publicDocs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS);
+            if (publicDocs != null) {
+                File dir = new File(publicDocs, "VeniceAI_Backups");
+                if (!dir.exists()) {
+                    dir.mkdirs();
+                }
+                return dir;
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Cannot access public Documents directory (scoped storage / permission denied)", t);
         }
-        return dir;
+        return null;
     }
 
     /**
@@ -707,25 +719,30 @@ public class BackupManager {
      * finds all valid backups and returns the latest working one.
      */
     public BackupCandidate findLatestWorkingBackupAcrossAllLocations() {
-        // 1. Custom SAF tree
-        Uri customTreeUri = getCustomBackupTreeUri();
-        if (customTreeUri != null) {
-            BackupCandidate c = findLatestWorkingBackupInTree(customTreeUri);
-            if (c != null) return c;
+        try {
+            // 1. Custom SAF tree
+            Uri customTreeUri = getCustomBackupTreeUri();
+            if (customTreeUri != null) {
+                BackupCandidate c = findLatestWorkingBackupInTree(customTreeUri);
+                if (c != null) return c;
+            }
+
+            // 2. Primary internal directory
+            File primaryDir = getPrimaryBackupDirectory();
+            BackupCandidate primCandidate = primaryDir != null ? findLatestWorkingBackupInDirectory(primaryDir) : null;
+
+            // 3. Public Documents directory
+            File publicDir = getPublicDocumentsBackupDirectory();
+            BackupCandidate pubCandidate = publicDir != null ? findLatestWorkingBackupInDirectory(publicDir) : null;
+
+            if (primCandidate != null && pubCandidate != null) {
+                return primCandidate.timestamp >= pubCandidate.timestamp ? primCandidate : pubCandidate;
+            }
+            return primCandidate != null ? primCandidate : pubCandidate;
+        } catch (Throwable t) {
+            Log.w(TAG, "Error finding latest working backup across locations", t);
+            return null;
         }
-
-        // 2. Primary internal directory
-        File primaryDir = getPrimaryBackupDirectory();
-        BackupCandidate primCandidate = findLatestWorkingBackupInDirectory(primaryDir);
-
-        // 3. Public Documents directory
-        File publicDir = getPublicDocumentsBackupDirectory();
-        BackupCandidate pubCandidate = findLatestWorkingBackupInDirectory(publicDir);
-
-        if (primCandidate != null && pubCandidate != null) {
-            return primCandidate.timestamp >= pubCandidate.timestamp ? primCandidate : pubCandidate;
-        }
-        return primCandidate != null ? primCandidate : pubCandidate;
     }
 
     public BackupData getLatestExistingBackup() {

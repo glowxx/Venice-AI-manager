@@ -63,7 +63,10 @@ import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.materialswitch.MaterialSwitch;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -111,19 +114,39 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
 
-        settingsPrefs = getSharedPreferences("venice_settings", MODE_PRIVATE);
-        accountManager = new AccountManager(this);
-        veniceJsBridge = new VeniceJsBridge(this);
+        // Catch and log uncaught exceptions so app crashes are never completely silent
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+            Log.e(TAG, "FATAL UNCAUGHT EXCEPTION in thread " + thread.getName(), throwable);
+            try {
+                File crashLog = new File(getFilesDir(), "last_crash.log");
+                try (FileOutputStream fos = new FileOutputStream(crashLog)) {
+                    fos.write(Log.getStackTraceString(throwable).getBytes(StandardCharsets.UTF_8));
+                }
+            } catch (Throwable ignored) {}
+            System.exit(1);
+        });
 
-        initViews();
-        setupLaunchers();
-        setupPermissions();
-        setupFloatingMenu();
+        try {
+            setContentView(R.layout.activity_main);
 
-        // Initialize and attach isolated WebView for the active account
-        switchAccountAndRecreateWebView(accountManager.getActiveAccount().id, null);
+            settingsPrefs = getSharedPreferences("venice_settings", MODE_PRIVATE);
+            accountManager = new AccountManager(this);
+            veniceJsBridge = new VeniceJsBridge(this);
+
+            initViews();
+            setupLaunchers();
+            setupPermissions();
+            setupFloatingMenu();
+
+            // Initialize and attach isolated WebView for the active account
+            AccountManager.AccountProfile active = accountManager.getActiveAccount();
+            String activeId = (active != null && active.id != null) ? active.id : "profile_default";
+            switchAccountAndRecreateWebView(activeId, null);
+        } catch (Throwable t) {
+            Log.e(TAG, "Fatal error initializing MainActivity", t);
+            Toast.makeText(this, "Startup error: " + t.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
     private void initViews() {
@@ -398,6 +421,7 @@ public class MainActivity extends AppCompatActivity {
         cm.setAcceptThirdPartyCookies(wv, true);
 
         // Add WebMessage listener / JavaScript bridge for generation state detection
+        boolean listenerAdded = false;
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             try {
                 WebViewCompat.addWebMessageListener(
@@ -413,12 +437,17 @@ public class MainActivity extends AppCompatActivity {
                             }
                         }
                 );
-            } catch (Exception e) {
+                listenerAdded = true;
+            } catch (Throwable e) {
                 Log.w(TAG, "Failed adding WebMessageListener, fallback to interface", e);
-                wv.addJavascriptInterface(veniceJsBridge, VeniceJsBridge.JS_INTERFACE_NAME);
             }
-        } else {
-            wv.addJavascriptInterface(veniceJsBridge, VeniceJsBridge.JS_INTERFACE_NAME);
+        }
+        if (!listenerAdded) {
+            try {
+                wv.addJavascriptInterface(veniceJsBridge, VeniceJsBridge.JS_INTERFACE_NAME);
+            } catch (Throwable t) {
+                Log.w(TAG, "Failed adding JavascriptInterface", t);
+            }
         }
 
         veniceJsBridge.setStateListener(new VeniceJsBridge.GenerationStateListener() {
@@ -567,7 +596,7 @@ public class MainActivity extends AppCompatActivity {
                         if (!Profile.DEFAULT_PROFILE_NAME.equals(incognitoProfileName)) {
                             ProfileStore.getInstance().deleteProfile(incognitoProfileName);
                         }
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         Log.w(TAG, "Failed deleting incognito profile", e);
                     }
                 }
@@ -620,7 +649,7 @@ public class MainActivity extends AppCompatActivity {
                 Log.i(TAG, "Assigned isolated WebView profile: " + profileName);
 
                 // If target account has saved cookies, inject them into this profile's CookieManager
-                if (!TextUtils.isEmpty(targetProfile.cookies)) {
+                if (targetProfile != null && !TextUtils.isEmpty(targetProfile.cookies)) {
                     CookieManager profileCm = profile.getCookieManager();
                     String[] cookiePairs = targetProfile.cookies.split(";");
                     for (String c : cookiePairs) {
@@ -632,22 +661,26 @@ public class MainActivity extends AppCompatActivity {
                     }
                     profileCm.flush();
                 }
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 Log.e(TAG, "Failed setting profile on WebView: " + profileName, e);
             }
         } else {
             // Fallback: inject saved cookies into global CookieManager
-            if (!TextUtils.isEmpty(targetProfile.cookies)) {
-                CookieManager cm = CookieManager.getInstance();
-                String[] cookiePairs = targetProfile.cookies.split(";");
-                for (String c : cookiePairs) {
-                    String trimmed = c.trim();
-                    if (!trimmed.isEmpty()) {
-                        cm.setCookie(VENICE_CHAT_URL, trimmed + "; Domain=" + AccountManager.VENICE_DOMAIN + "; Path=/");
-                        cm.setCookie("https://venice.ai", trimmed + "; Domain=.venice.ai; Path=/");
+            if (targetProfile != null && !TextUtils.isEmpty(targetProfile.cookies)) {
+                try {
+                    CookieManager cm = CookieManager.getInstance();
+                    String[] cookiePairs = targetProfile.cookies.split(";");
+                    for (String c : cookiePairs) {
+                        String trimmed = c.trim();
+                        if (!trimmed.isEmpty()) {
+                            cm.setCookie(VENICE_CHAT_URL, trimmed + "; Domain=" + AccountManager.VENICE_DOMAIN + "; Path=/");
+                            cm.setCookie("https://venice.ai", trimmed + "; Domain=.venice.ai; Path=/");
+                        }
                     }
+                    cm.flush();
+                } catch (Throwable t) {
+                    Log.w(TAG, "Failed injecting cookies into global CookieManager", t);
                 }
-                cm.flush();
             }
         }
 

@@ -81,7 +81,7 @@
     <string name="setting_clear_cache">Clear Web Cache</string>
     <string name="setting_reload_page">Reload Venice Page</string>
     <string name="cache_cleared">Web cache and session cache cleared</string>
-    <string name="app_footer_info">Venice AI Launcher v1.0.8</string>
+    <string name="app_footer_info">Venice AI Launcher v1.0.9</string>
     <string name="venice_footer_tagline">Venice AI · Private, Uncensored &amp; Unbiased</string>
     
     <!-- Status & Toasts -->
