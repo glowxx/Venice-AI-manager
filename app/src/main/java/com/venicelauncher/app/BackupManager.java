@@ -45,6 +45,7 @@ public class BackupManager {
     public static final String TIMESTAMP_FORMAT = "yyyy-MM-dd_HH-mm-ss";
     public static final String BACKUP_PREFIX = "venice_backup_";
     public static final int MAX_ROTATED_BACKUPS = 5;
+    public static final int MAX_BACKUP_ENTRY_SIZE = 10 * 1024 * 1024; // 10 MB Zip Bomb protection limit
 
     private static final Pattern PATTERN_DATE_DASH = Pattern.compile("venice_backup_(\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2})");
     private static final Pattern PATTERN_DATE_COMPACT = Pattern.compile("venice_backup_(\\d{8}_\\d{6})");
@@ -501,17 +502,33 @@ public class BackupManager {
                 if (name.equals("accounts.json") || name.endsWith("/accounts.json")) {
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     int len;
+                    int total = 0;
                     while ((len = zis.read(buffer)) > 0) {
+                        total += len;
+                        if (total > MAX_BACKUP_ENTRY_SIZE) {
+                            Log.w(TAG, "Entry accounts.json exceeded maximum safety size (" + MAX_BACKUP_ENTRY_SIZE + " bytes)");
+                            break;
+                        }
                         baos.write(buffer, 0, len);
                     }
-                    accountsContent = baos.toString("UTF-8");
+                    if (total <= MAX_BACKUP_ENTRY_SIZE) {
+                        accountsContent = baos.toString("UTF-8");
+                    }
                 } else if (name.equals("manifest.json") || name.endsWith("/manifest.json")) {
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     int len;
+                    int total = 0;
                     while ((len = zis.read(buffer)) > 0) {
+                        total += len;
+                        if (total > MAX_BACKUP_ENTRY_SIZE) {
+                            Log.w(TAG, "Entry manifest.json exceeded maximum safety size (" + MAX_BACKUP_ENTRY_SIZE + " bytes)");
+                            break;
+                        }
                         baos.write(buffer, 0, len);
                     }
-                    manifestContent = baos.toString("UTF-8");
+                    if (total <= MAX_BACKUP_ENTRY_SIZE) {
+                        manifestContent = baos.toString("UTF-8");
+                    }
                 }
                 zis.closeEntry();
             }

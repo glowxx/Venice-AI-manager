@@ -47,6 +47,7 @@ public class AntiDetectManagerTest {
         assertTrue("Script must spoof deviceMemory", script.contains("deviceMemory"));
         assertTrue("Script must spoof WebGL parameters", script.contains("WebGLRenderingContext"));
         assertTrue("Script must inject Canvas noise", script.contains("HTMLCanvasElement.prototype.toDataURL"));
+        assertTrue("Script must use offscreen canvas for safe export", script.contains("createElement('canvas')"));
         assertTrue("Script must inject Audio noise", script.contains("AudioBuffer.prototype.getChannelData"));
         assertTrue("Script must embed profile seed", script.contains("var seed = 42;"));
     }

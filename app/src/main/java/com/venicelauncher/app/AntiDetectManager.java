@@ -107,18 +107,25 @@ public class AntiDetectManager {
                 "    if (window.WebGL2RenderingContext) patchGl(window.WebGL2RenderingContext.prototype);\n" +
                 "  } catch(e) {}\n" +
                 "  \n" +
-                "  // 4. Subtle Canvas 2D noise injection per seed\n" +
+                "  // 4. Subtle Canvas 2D noise injection per seed (applied to off-screen export to protect live canvas)\n" +
                 "  try {\n" +
                 "    if (window.HTMLCanvasElement) {\n" +
                 "      var origToDataURL = HTMLCanvasElement.prototype.toDataURL;\n" +
                 "      HTMLCanvasElement.prototype.toDataURL = function() {\n" +
                 "        try {\n" +
-                "          var ctx = this.getContext('2d');\n" +
-                "          if (ctx && this.width > 0 && this.height > 0 && this.width <= 512 && this.height <= 512) {\n" +
-                "            var img = ctx.getImageData(0, 0, 1, 1);\n" +
-                "            var noise = (seed % 3) + 1;\n" +
-                "            img.data[0] = (img.data[0] ^ noise);\n" +
-                "            ctx.putImageData(img, 0, 0);\n" +
+                "          if (this.width > 0 && this.height > 0 && this.width <= 512 && this.height <= 512) {\n" +
+                "            var offscreen = document.createElement('canvas');\n" +
+                "            offscreen.width = this.width;\n" +
+                "            offscreen.height = this.height;\n" +
+                "            var offCtx = offscreen.getContext('2d');\n" +
+                "            if (offCtx) {\n" +
+                "              offCtx.drawImage(this, 0, 0);\n" +
+                "              var img = offCtx.getImageData(0, 0, 1, 1);\n" +
+                "              var noise = (seed % 3) + 1;\n" +
+                "              img.data[0] = (img.data[0] ^ noise);\n" +
+                "              offCtx.putImageData(img, 0, 0);\n" +
+                "              return origToDataURL.apply(offscreen, arguments);\n" +
+                "            }\n" +
                 "          }\n" +
                 "        } catch(e) {}\n" +
                 "        return origToDataURL.apply(this, arguments);\n" +
@@ -127,12 +134,19 @@ public class AntiDetectManager {
                 "      var origToBlob = HTMLCanvasElement.prototype.toBlob;\n" +
                 "      HTMLCanvasElement.prototype.toBlob = function(callback, type, quality) {\n" +
                 "        try {\n" +
-                "          var ctx = this.getContext('2d');\n" +
-                "          if (ctx && this.width > 0 && this.height > 0 && this.width <= 512 && this.height <= 512) {\n" +
-                "            var img = ctx.getImageData(0, 0, 1, 1);\n" +
-                "            var noise = (seed % 3) + 1;\n" +
-                "            img.data[0] = (img.data[0] ^ noise);\n" +
-                "            ctx.putImageData(img, 0, 0);\n" +
+                "          if (this.width > 0 && this.height > 0 && this.width <= 512 && this.height <= 512) {\n" +
+                "            var offscreen = document.createElement('canvas');\n" +
+                "            offscreen.width = this.width;\n" +
+                "            offscreen.height = this.height;\n" +
+                "            var offCtx = offscreen.getContext('2d');\n" +
+                "            if (offCtx) {\n" +
+                "              offCtx.drawImage(this, 0, 0);\n" +
+                "              var img = offCtx.getImageData(0, 0, 1, 1);\n" +
+                "              var noise = (seed % 3) + 1;\n" +
+                "              img.data[0] = (img.data[0] ^ noise);\n" +
+                "              offCtx.putImageData(img, 0, 0);\n" +
+                "              return origToBlob.apply(offscreen, arguments);\n" +
+                "            }\n" +
                 "          }\n" +
                 "        } catch(e) {}\n" +
                 "        return origToBlob.apply(this, arguments);\n" +

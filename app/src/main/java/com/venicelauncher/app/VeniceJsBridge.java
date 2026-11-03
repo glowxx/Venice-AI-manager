@@ -207,8 +207,13 @@ public class VeniceJsBridge {
                 "    };\n" +
                 "  }\n" +
                 "  \n" +
+                "  var mutationThrottleTimer = null;\n" +
                 "  var observer = new MutationObserver(function() {\n" +
-                "    checkGenerationState();\n" +
+                "    if (mutationThrottleTimer) return;\n" +
+                "    mutationThrottleTimer = setTimeout(function() {\n" +
+                "      mutationThrottleTimer = null;\n" +
+                "      checkGenerationState();\n" +
+                "    }, 200);\n" +
                 "  });\n" +
                 "  if (document.body) {\n" +
                 "    observer.observe(document.body, { childList: true, subtree: true });\n" +

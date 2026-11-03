@@ -41,4 +41,10 @@ public class BackupManagerTest {
 
         assertTrue(BackupManager.isValidAccountsJson("[{\"id\":\"acc_1\",\"name\":\"Account 1\"}]"));
     }
+
+    @Test
+    public void testMaxBackupEntrySizeLimitConfigured() {
+        assertTrue("Max entry size must be at least 1MB", BackupManager.MAX_BACKUP_ENTRY_SIZE >= 1024 * 1024);
+        assertTrue("Max entry size should not exceed 50MB for mobile safety", BackupManager.MAX_BACKUP_ENTRY_SIZE <= 50 * 1024 * 1024);
+    }
 }

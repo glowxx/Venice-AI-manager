@@ -221,7 +221,7 @@ public class BackgroundKeepAliveService extends Service {
     private void stopForegroundService() {
         releaseWakeLock();
         timeoutHandler.removeCallbacks(wakeLockTimeoutRunnable);
-        stopForeground(true);
+        stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
 

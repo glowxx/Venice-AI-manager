@@ -1,100 +1,100 @@
 # Venice AI Manager for Android
 
-[![Platform](https://img.shields.io/badge/Platform-Android%208.0%2B%20(API%2026--34)-green.svg)](https://android.com)
-[![Version](https://img.shields.io/badge/Version-1.0.7-blue.svg)](https://github.com/glowxx/Venice-AI-manager/releases)
-[![License](https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg)](LICENSE)
+<p align="center">
+  <img src="app/src/main/res/drawable/ic_venice_logo.png" alt="Venice AI Manager Logo" width="96" height="96" />
+</p>
 
-A native Android wrapper, session manager, and background generation runner for [Venice.ai](https://venice.ai).
+<p align="center">
+  <strong>Native Android companion for Venice.ai with background stream keep-alive, isolated multi-account sandboxing, and anti-detect privacy protection.</strong>
+</p>
 
-Standard mobile browsers suspend background JavaScript processing when the app is minimized or the screen turns off, terminating long-running AI stream generation and losing context. Furthermore, managing multiple Venice AI accounts requires tedious logout/login cycles. **Venice AI Manager** solves these issues with generation-only background execution, isolated profile switching, authentic Venice.ai aesthetics, and live automatic backups.
-
----
-
-## What's New in v1.0.7
-
-1. **Hardware-Level Sandboxed Browser Environments per Account (`ProfileStore`)**:
-   - Upgraded to modern `androidx.webkit.ProfileStore` multi-profile containerization.
-   - Each account operates in its own completely separate, physically isolated Chromium browser storage sandbox (`Profile.getOrCreateProfile()`).
-   - Dedicated, unshared storage per account:
-     - Independent Cookies (`profile.getCookieManager()`)
-     - Independent `localStorage` and `sessionStorage`
-     - Independent `IndexedDB` (where Venice.ai stores authentication tokens and session caches)
-     - Independent Service Worker controllers and HTTP caches
-   - Completely eliminates session bleeding and sticky accounts: switching accounts destroys the active renderer and instantiates a clean WebView bound strictly to the target profile's isolated container.
-2. **Physical Disk Deletion for Deleted and Incognito Profiles**:
-   - Deleting an account or leaving an incognito session triggers `ProfileStore.deleteProfile()`, physically removing all corresponding browser files, databases, and caches from disk.
+<p align="center">
+  <a href="https://android.com"><img src="https://img.shields.io/badge/Platform-Android%208.0%2B%20(API%2026--34)-3DDC84.svg?style=flat&logo=android&logoColor=white" alt="Platform" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-125DA3.svg?style=flat" alt="License" /></a>
+  <a href="https://venice.ai"><img src="https://img.shields.io/badge/Service-Venice.ai-BEA989.svg?style=flat" alt="Venice AI" /></a>
+  <img src="https://img.shields.io/badge/Containers-Chromium%20ProfileStore-success.svg?style=flat" alt="Containers" />
+  <img src="https://img.shields.io/badge/Telemetry-Zero-lightgrey.svg?style=flat" alt="Zero Telemetry" />
+</p>
 
 ---
 
-## What's New in v1.0.6
+## The Problem with Standard Mobile Browsers
 
-1. **Temporary Incognito Profiles (Disposable Sessions)**:
-   - Create disposable incognito sessions in the Account Manager with a single tap.
-   - **Zero-Trace Auto-Purge**: All cookies, session storage, and profile credentials are completely purged immediately upon switching to another profile or exiting/closing the application.
-   - **Backup Isolation**: Incognito sessions are strictly excluded from automated ZIP backup archives (`venice_backup_*.zip`) and local profile lists, preventing accidental privacy leaks.
-   - Visual indicator badge (`🕶 Incognito`) in dialogs and account switcher.
+Using **[Venice.ai](https://venice.ai)** inside standard mobile browsers (Chrome, Brave, Firefox) poses two severe limitations on Android:
 
-2. **Refined Session Lifecycle Protection**:
-   - Web storage (`localStorage` & `sessionStorage`) cleared and re-injected per account switch.
-   - Automatic cleanup of any stale temporary sessions upon application cold boot.
+1. **Background Freezing & Stream Interruption**: When you turn off your screen or switch to another app while Venice AI is generating a complex prompt or rendering an image, Android suspends browser JavaScript timers and network connections. The stream cuts off, the response is lost, and you have to regenerate from scratch.
+2. **Account Switching Friction**: Managing separate Venice AI accounts (e.g. personal, work, pro tier, anonymous) requires constantly logging out, entering credentials, solving captchas, and going through 2FA.
+
+**Venice AI Manager** solves these issues with a hardened native Android runtime engineered specifically for high-reliability AI workloads.
 
 ---
 
-## What's New in v1.0.5
+## Core Capabilities
 
-1. **Keep-Alive Strictly During Active Generation**:
-   - The background keep-alive service runs **only** while Venice AI is actively generating responses or rendering images.
-   - The moment generation completes, the wake lock is released, completion notifications fire, and the background service shuts down immediately.
-   - Zero background battery drain while idle.
-2. **Authentic Venice.ai Design Language**:
-   - Completely redesigned settings and profile dialogs using official Venice.ai color tokens:
-     - Deep Sea (`#06090D`) & Midnight Blue (`#0E1217`) surfaces
-     - Stucco Light (`#EEEDE4`) typography
-     - Stucco Sand Gold (`#BEA989`) section headers and badges
-     - Ocean Accent (`#125DA3`) buttons
-   - Eliminates generic clutter and "AI aesthetic" in favor of sleek, minimalist editorial styling.
-3. **Continuous Live Auto-Backup with Custom Folder Selection**:
-   - Choose any folder on your device (SD Card, Downloads, Documents, etc.) via Android's Storage Access Framework (`OpenDocumentTree`).
-   - Automatically writes a complete `.zip` backup (`manifest.json`, `accounts.json`, `cookies/`, `storage/`) whenever profiles, cookies, or sessions update.
-   - Includes automatic rotation of timestamped archives (preserves latest 5).
+### ⚡ 1. Task-Bound Background Generation Keeper
+- **Active-Only Execution**: The background engine activates **strictly while Venice AI is actively generating responses or rendering media**.
+- **Zero Idle Drain**: The moment text streaming or image inference completes, the CPU `PARTIAL_WAKE_LOCK` is released and the Foreground Service stops immediately.
+- **Real-Time Stream Observer**: Dual-mode observer (`VeniceJsBridge`) monitors live DOM mutations, button state transitions, and inference API requests with intelligent throttling to prevent rendering micro-stutters.
+- **Haptic & Sound Alerts**: Receives real-time push notifications and customizable haptic vibration feedback the second generation finishes.
+
+```mermaid
+flowchart LR
+    A[Send Prompt in Venice AI] --> B{AI Generating?}
+    B -- Yes --> C[Engage Foreground Service + WakeLock]
+    C --> D[Device Locked / App Minimized]
+    D --> E[V8 Event Loop & SSE Stream Kept Alive]
+    E --> F[Inference Finishes]
+    F --> G[Release WakeLock + Shut Down Service]
+    G --> H[Vibrate + Post Completion Notification]
+    B -- No --> I[Zero Background Resource Usage]
+```
 
 ---
 
-## Key Features
+### 🛡️ 2. Hardware-Level Sandboxed Profile Store
+- **Multi-Container Isolation**: Powered by modern `androidx.webkit.ProfileStore`. Each account operates inside its own physically isolated Chromium storage container:
+  - Separate cookies (`profile.getCookieManager()`)
+  - Dedicated `localStorage` & `sessionStorage`
+  - Independent `IndexedDB` databases (where Venice stores auth tokens and chat caches)
+  - Dedicated HTTP cache and Service Worker controllers
+- **Instant 1-Tap Switching**: Switch between profiles in a fraction of a second without logging out or re-entering credentials.
+- **Zero Session Bleeding**: Switching profiles cleanly destroys the active renderer and instantiates a pristine WebView bound strictly to the target container.
+- **Disk Sanitization**: Deleting an account physically deletes all associated database files and cookies from storage.
 
-### 1. Isolated Multi-Account Manager (`AccountManager`)
-- Create and switch between multiple independent Venice AI profiles in 1 tap.
-- Preserves full session authentication:
-  - Live session cookies (`CookieManager`)
-  - Browser `localStorage`
-  - Browser `sessionStorage`
-- Never get logged out or forced through repeated 2FA/login screens when switching accounts.
+---
 
-### 2. Task-Bound Background Keep-Alive Engine (`BackgroundKeepAliveService`)
-- Real-time DOM and SSE stream observer (`VeniceJsBridge`) detects when Venice AI is actively generating responses.
-- Automatically acquires a `PARTIAL_WAKE_LOCK` and engages an Android Foreground Service during stream generation.
-- Completion alerts: Plays haptic vibration and displays a system notification when the AI finishes writing.
+### 🕶️ 3. Anti-Detect & Stealth Privacy Engine
+- **User-Agent Sanitization**: Normalizes User-Agent strings, removing WebView markers (`; wv`, `Version/4.0`, launcher tags) to match standard desktop/mobile Google Chrome.
+- **Header Masking**: Automatically suppresses the `X-Requested-With: com.venicelauncher.app` HTTP header via AndroidX allow-lists.
+- **Fingerprint Noise**: Injects subtle, profile-seeded deterministic noise into Canvas 2D exports, WebGL vendor/renderer parameters, and AudioContext buffers without distorting on-screen graphics.
+- **WebRTC Shield**: Disables WebRTC STUN candidate discovery to prevent local IP leakage.
+- **Disposable Incognito Sessions**: Launch temporary guest profiles with a single tap. All cookies, tokens, and profile data are completely purged from disk the moment you switch profiles or close the app.
 
-### 3. ZIP-Based Complete Backup & Restore System (`BackupManager`)
-- **Full ZIP Export**: Packages all accounts, live session cookies, and local storage into a standard `.zip` archive:
+---
+
+### 📦 4. Live Automatic Backups & 1-Click Restore
+- **Custom Folder Binding**: Select any directory on your device (SD Card, Documents, synced Nextcloud/Drive folder) using Android's Storage Access Framework (`OpenDocumentTree`).
+- **Standard ZIP Archives**: Exports complete self-contained `.zip` archives containing all profiles, session cookies, and storage snapshots:
   ```text
-  venice_backup_YYYYMMDD_HHMMSS.zip
-  ├── manifest.json              # Schema version 3, account summary, active ID, timestamp
+  venice_backup_YYYY-MM-DD_HH-mm-ss.zip
+  ├── manifest.json              # Archive metadata, schema version, profile count
   ├── accounts.json              # Full account profiles payload
-  ├── cookies/                   # Raw session cookie dumps per profile
-  ├── storage/                   # LocalStorage & SessionStorage snapshots per profile
+  ├── cookies/                   # Raw session cookie dumps per account
+  ├── storage/                   # LocalStorage & SessionStorage snapshots per account
   └── README.txt                 # Archive information
   ```
-- **Custom Location & Live Sync**: Point auto-backup to any folder. Backups trigger automatically on cookie updates, profile changes, and when minimizing the app.
-- **Instant Restore**: Restoring from a backup archive immediately injects cookies, restores storage, and re-authenticates without manual login.
+- **Automated Sync & Rotation**: Backs up automatically on profile/cookie changes while keeping the latest 5 timestamped versions.
+- **Disaster Recovery**: Automatically scans any folder for valid archives and restores full authentication across all accounts in seconds.
 
-### 4. Native Android Integration
-- **File Attachments**: Web file chooser supporting camera capture and gallery selection for vision and prompt attachments.
-- **Download Manager**: Native download listener that saves generated images directly to device public `Downloads` with progress notifications.
-- **Ergonomic Fullscreen UX**:
-  - Non-intrusive, draggable floating menu (snaps to screen edges).
-  - Optional stealth mode: Hide floating button completely and access settings by long-pressing the device Back button.
-  - Pull-to-refresh toggle.
+---
+
+### 📱 5. Native Android Ergonomics & UX
+- **Snapping Floating Control**: Draggable floating button providing instant access to accounts and settings, automatically snapping to screen edges.
+- **Stealth Mode**: Toggle off the floating button entirely and open the control center by long-pressing the device Back button.
+- **Predictive Back Navigation**: Fully integrated with Android 13/14 back gesture navigation.
+- **Native Download Manager**: Integrated download listener directly enqueues generated images into Android's public `Downloads` directory with system progress bars.
+- **File & Camera Chooser**: Supports attaching photos and files directly from camera capture or gallery picker into chat prompts.
+- **Venice Dark Aesthetic**: Styled with official Venice.ai color palettes (Deep Sea `#06090D`, Midnight `#0E1217`, and Sand Gold `#BEA989`).
 
 ---
 
@@ -102,12 +102,13 @@ Standard mobile browsers suspend background JavaScript processing when the app i
 
 ```
 com.venicelauncher.app/
-├── MainActivity.java                 # Core WebView container, SAF launchers, floating UI
-├── BackgroundKeepAliveService.java   # Android Foreground Service + WakeLock lifecycle
-├── AccountManager.java               # Profile state, session snapshotting & cookie syncing
-├── BackupManager.java                # ZIP archive compression/decompression & auto-backup
-├── VeniceJsBridge.java               # JavaScript interface & DOM mutation stream watcher
-└── AccountsAdapter.java              # Material RecyclerView adapter for profile switching
+├── MainActivity.java                 # Core WebView lifecycle, UI orchestration, gesture navigation
+├── BackgroundKeepAliveService.java   # Android Foreground Service, WakeLock & completion alerts
+├── AccountManager.java               # Containerized profile state, session snapshots & cookie sync
+├── AntiDetectManager.java            # UA normalization, fingerprint noise & privacy guard
+├── BackupManager.java                # Structured ZIP compression, SAF folder sync & auto-recovery
+├── VeniceJsBridge.java               # Low-overhead DOM stream observer & generation detector
+└── AccountsAdapter.java              # RecyclerView adapter for quick profile switching
 ```
 
 ---
@@ -115,39 +116,56 @@ com.venicelauncher.app/
 ## Building from Source
 
 ### Prerequisites
-- JDK 17
-- Android SDK (API Level 34, Build Tools 34.0.0)
-- Or **Docker** (recommended for reproducible builds)
+- **Docker** (recommended for reproducible 1-command builds)
+- *Alternatively*: JDK 17, Android SDK (Platform 34, Build Tools 34.0.0)
 
-### Build with Docker
+### 1. Build with Docker (Recommended)
 ```bash
 ./build_apk.sh
 ```
-The compiled, signed release APK will be placed at `./VeniceLauncher.apk`.
+The script compiles, aligns, and signs the release APK inside an isolated Android SDK container. Output will be generated at `./VeniceLauncher.apk`.
 
-### Build with Gradle CLI
+### 2. Build with Gradle CLI
 ```bash
 ./gradlew assembleRelease
 ```
-The APK output is located at `app/build/outputs/apk/release/app-release.apk`.
+The output APK is generated at `app/build/outputs/apk/release/app-release.apk`.
+
+### Run Unit Tests
+```bash
+./gradlew test
+```
 
 ---
 
-## Permissions
+## Permissions Breakdown
 
-| Permission | Purpose |
-|---|---|
-| `INTERNET` | Load Venice AI web application |
-| `ACCESS_NETWORK_STATE` | Detect network transitions |
-| `WAKE_LOCK` | Prevent CPU sleep during background response generation |
-| `FOREGROUND_SERVICE` | Run persistent generation service |
-| `POST_NOTIFICATIONS` | Generation status and completion notifications |
-| `VIBRATE` | Haptic feedback upon response completion |
-| `CAMERA` | Take photo attachments for prompts |
-| `READ_MEDIA_IMAGES` | Select image attachments from device gallery |
+Venice AI Manager requests only the permissions strictly necessary to execute background generation and native Android integrations:
+
+| Permission | Category | Purpose |
+|---|---|---|
+| `INTERNET` | Network | Connect to Venice AI services |
+| `ACCESS_NETWORK_STATE` | Network | Monitor network connectivity transitions |
+| `WAKE_LOCK` | System | Keep CPU active during background AI generation |
+| `FOREGROUND_SERVICE` | Service | Run background keep-alive process |
+| `FOREGROUND_SERVICE_DATA_SYNC` / `SPECIAL_USE` | Service | Android 14 Foreground Service type compliance |
+| `POST_NOTIFICATIONS` | UX | Notify when text/image generation finishes in background |
+| `VIBRATE` | Haptic | Provide vibration alert on response completion |
+| `CAMERA` | Media | Capture photo attachments directly for multimodal prompts |
+| `READ_MEDIA_IMAGES` / `READ_EXTERNAL_STORAGE` | Storage | Attach images from device storage |
+
+---
+
+## Security & Privacy Model
+
+- **No Third-Party Analytics**: 0 trackers, 0 external SDKs, 0 telemetry.
+- **Direct Connection**: All HTTP/WebSocket traffic travels directly between your device's Chromium engine and `https://venice.ai`.
+- **Local Storage Only**: All account sessions, cookies, and backups remain strictly on your local device storage or the folder you designate.
+- **Open Source**: Full source code available under Apache 2.0.
 
 ---
 
 ## License
 
-This project is licensed under the Apache 2.0 License.
+This project is licensed under the [Apache License 2.0](LICENSE).
+Venice AI is a trademark of its respective owners. This application is an independent open-source client.

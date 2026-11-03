@@ -41,6 +41,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultCallback;
 import androidx.activity.result.ActivityResultLauncher;
@@ -69,8 +70,10 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -97,6 +100,7 @@ public class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<Uri> chooseBackupFolderLauncher;
     private ActivityResultLauncher<Uri> chooseRestoreFolderLauncher;
     private BottomSheetDialog activeSettingsDialog;
+    private boolean pendingStorageRestore = false;
 
     private boolean isGenerating = false;
     private final Handler heartbeatHandler = new Handler(Looper.getMainLooper());
@@ -138,6 +142,18 @@ public class MainActivity extends AppCompatActivity {
             setupLaunchers();
             setupPermissions();
             setupFloatingMenu();
+
+            // Register modern back navigation dispatcher (supports both physical back & Android 13/14 gesture navigation)
+            getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+                @Override
+                public void handleOnBackPressed() {
+                    if (webView != null && webView.canGoBack()) {
+                        webView.goBack();
+                    } else {
+                        showLauncherSettingsDialog();
+                    }
+                }
+            });
 
             // Initialize and attach isolated WebView for the active account
             AccountManager.AccountProfile active = accountManager.getActiveAccount();
@@ -424,10 +440,14 @@ public class MainActivity extends AppCompatActivity {
         boolean listenerAdded = false;
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             try {
+                Set<String> allowedOrigins = new HashSet<>(Arrays.asList(
+                        "https://venice.ai",
+                        "https://chat.venice.ai"
+                ));
                 WebViewCompat.addWebMessageListener(
                         wv,
                         VeniceJsBridge.WEB_MESSAGE_PORT_NAME,
-                        Collections.singleton("https://venice.ai"),
+                        allowedOrigins,
                         (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
                             String data = message.getData();
                             if ("STARTED".equals(data)) {
@@ -493,6 +513,17 @@ public class MainActivity extends AppCompatActivity {
                 progressBar.setVisibility(View.VISIBLE);
                 int seed = AntiDetectManager.getProfileSeed(accountId, isIncognito);
                 view.evaluateJavascript(AntiDetectManager.buildAntiDetectScript(seed), null);
+
+                // Inject restored localStorage and sessionStorage if pending
+                if (pendingStorageRestore) {
+                    AccountManager.AccountProfile currentActive = accountManager.getActiveAccount();
+                    if (currentActive != null &&
+                            ((!TextUtils.isEmpty(currentActive.localStorageJson) && !currentActive.localStorageJson.equals("{}")) ||
+                             (!TextUtils.isEmpty(currentActive.sessionStorageJson) && !currentActive.sessionStorageJson.equals("{}")))) {
+                        view.evaluateJavascript(AccountManager.buildRestoreStorageScript(currentActive), null);
+                    }
+                    pendingStorageRestore = false;
+                }
             }
 
             @Override
@@ -606,6 +637,7 @@ public class MainActivity extends AppCompatActivity {
         // 2. Set new active account ID in AccountManager
         accountManager.setActiveAccountId(targetAccountId);
         final AccountManager.AccountProfile targetProfile = accountManager.getActiveAccount();
+        pendingStorageRestore = true;
 
         // 3. Cleanly remove and destroy the old WebView
         if (webView != null) {
@@ -712,6 +744,10 @@ public class MainActivity extends AppCompatActivity {
     private void startBackgroundService(String action) {
         Intent intent = new Intent(this, BackgroundKeepAliveService.class);
         intent.setAction(action);
+        if (BackgroundKeepAliveService.ACTION_STOP_KEEPALIVE.equals(action)) {
+            stopService(intent);
+            return;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent);
         } else {
@@ -1071,6 +1107,10 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         heartbeatHandler.removeCallbacks(heartbeatRunnable);
+        if (activeSettingsDialog != null && activeSettingsDialog.isShowing()) {
+            activeSettingsDialog.dismiss();
+            activeSettingsDialog = null;
+        }
         if (accountManager != null && accountManager.isIncognitoActive()) {
             accountManager.purgeIncognitoAccounts(true);
         }
@@ -1134,16 +1174,23 @@ public class MainActivity extends AppCompatActivity {
         Toast.makeText(this, R.string.toast_restore_folder_scanning, Toast.LENGTH_SHORT).show();
         new Thread(() -> {
             final BackupManager.BackupCandidate candidate = accountManager.getBackupManager().findLatestWorkingBackupInTree(treeUri);
-            runOnUiThread(() -> {
-                if (candidate != null && candidate.data != null && accountManager.restoreFromBackup(candidate.data)) {
-                    int count = accountManager.getAccounts().size();
-                    String msg = String.format(getString(R.string.toast_restore_success_details), candidate.name, count);
-                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
-                    switchAccountAndRecreateWebView(accountManager.getActiveAccount().id, null);
-                } else {
+            if (candidate != null && candidate.data != null) {
+                final boolean success = accountManager.restoreFromBackup(candidate.data);
+                runOnUiThread(() -> {
+                    if (success) {
+                        int count = accountManager.getAccounts().size();
+                        String msg = String.format(getString(R.string.toast_restore_success_details), candidate.name, count);
+                        Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
+                        switchAccountAndRecreateWebView(accountManager.getActiveAccount().id, null);
+                    } else {
+                        Toast.makeText(MainActivity.this, R.string.toast_restore_folder_none, Toast.LENGTH_LONG).show();
+                    }
+                });
+            } else {
+                runOnUiThread(() -> {
                     Toast.makeText(MainActivity.this, R.string.toast_restore_folder_none, Toast.LENGTH_LONG).show();
-                }
-            });
+                });
+            }
         }).start();
     }
 
@@ -1151,16 +1198,23 @@ public class MainActivity extends AppCompatActivity {
         Toast.makeText(this, R.string.toast_restore_folder_scanning, Toast.LENGTH_SHORT).show();
         new Thread(() -> {
             final BackupManager.BackupCandidate candidate = accountManager.getBackupManager().findLatestWorkingBackupAcrossAllLocations();
-            runOnUiThread(() -> {
-                if (candidate != null && candidate.data != null && accountManager.restoreFromBackup(candidate.data)) {
-                    int count = accountManager.getAccounts().size();
-                    String msg = String.format(getString(R.string.toast_restore_success_details), candidate.name, count);
-                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
-                    switchAccountAndRecreateWebView(accountManager.getActiveAccount().id, null);
-                } else {
+            if (candidate != null && candidate.data != null) {
+                final boolean success = accountManager.restoreFromBackup(candidate.data);
+                runOnUiThread(() -> {
+                    if (success) {
+                        int count = accountManager.getAccounts().size();
+                        String msg = String.format(getString(R.string.toast_restore_success_details), candidate.name, count);
+                        Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
+                        switchAccountAndRecreateWebView(accountManager.getActiveAccount().id, null);
+                    } else {
+                        Toast.makeText(MainActivity.this, R.string.toast_restore_folder_none, Toast.LENGTH_LONG).show();
+                    }
+                });
+            } else {
+                runOnUiThread(() -> {
                     Toast.makeText(MainActivity.this, R.string.toast_restore_folder_none, Toast.LENGTH_LONG).show();
-                }
-            });
+                });
+            }
         }).start();
     }
 

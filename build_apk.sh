@@ -8,6 +8,7 @@ echo "=== Building Venice AI Launcher APK ==="
 mkdir -p /home/pi/.gradle-docker
 
 docker run --rm \
+    -w /project \
     -v "$DIR":/project \
     -v /home/pi/.gradle-docker:/root/.gradle \
     venice-builder \

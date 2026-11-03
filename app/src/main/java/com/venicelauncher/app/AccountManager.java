@@ -82,10 +82,6 @@ public class AccountManager {
         }
     }
 
-    public interface SwitchCallback {
-        void onSwitched(AccountProfile targetProfile);
-    }
-
     public AccountManager(Context context) {
         this.context = context.getApplicationContext();
         this.prefs = this.context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
@@ -290,10 +286,14 @@ public class AccountManager {
                     Log.e(TAG, "Failed parsing storage snapshot", e);
                 }
 
-                CookieManager cm = CookieManager.getInstance();
-                String currentCookies = cm.getCookie(VENICE_URL);
-                if (TextUtils.isEmpty(currentCookies)) {
-                    currentCookies = cm.getCookie("https://venice.ai");
+                AccountProfile active = getActiveAccount();
+                String currentCookies = "";
+                if (active != null) {
+                    CookieManager cm = getCookieManagerForProfile(active.id);
+                    currentCookies = cm.getCookie(VENICE_URL);
+                    if (TextUtils.isEmpty(currentCookies)) {
+                        currentCookies = cm.getCookie("https://venice.ai");
+                    }
                 }
 
                 saveActiveSession(currentCookies, lsJson, ssJson);
@@ -533,62 +533,8 @@ public class AccountManager {
         Log.d(TAG, "Saved full session snapshot for: " + active.name);
     }
 
-    /**
-     * Applies target account's cookies & storage to WebView and completes switch.
-     */
-    public void applyActiveAccountToWebView(WebView webView, SwitchCallback callback) {
-        final AccountProfile target = getActiveAccount();
-        final CookieManager cookieManager = CookieManager.getInstance();
-
-        cookieManager.removeAllCookies(new ValueCallback<Boolean>() {
-            @Override
-            public void onReceiveValue(Boolean success) {
-                if (!TextUtils.isEmpty(target.cookies)) {
-                    String[] cookiePairs = target.cookies.split(";");
-                    for (String cookie : cookiePairs) {
-                        String trimmed = cookie.trim();
-                        if (!trimmed.isEmpty()) {
-                            cookieManager.setCookie(VENICE_URL, trimmed + "; Domain=" + VENICE_DOMAIN + "; Path=/");
-                            cookieManager.setCookie("https://venice.ai", trimmed + "; Domain=.venice.ai; Path=/");
-                        }
-                    }
-                }
-                cookieManager.flush();
-
-                if (webView != null) {
-                    String restoreScript = buildRestoreStorageScript(target);
-                    webView.evaluateJavascript(restoreScript, null);
-                }
-
-                Log.d(TAG, "Applied session for profile: " + target.name);
-                if (callback != null) {
-                    callback.onSwitched(target);
-                }
-            }
-        });
-    }
-
-    public void switchAccount(WebView webView, String targetId, SwitchCallback callback) {
-        AccountProfile current = getActiveAccount();
-        if (current.isIncognito && !targetId.equals(current.id)) {
-            // Switching away from Incognito: do NOT save incognito data!
-            // Immediately purge the incognito temporary profile from storage
-            purgeIncognitoAccounts(false);
-            prefs.edit().putString(KEY_ACTIVE_ACCOUNT_ID, targetId).apply();
-            applyActiveAccountToWebView(webView, callback);
-            return;
-        }
-
-        snapshotAndSaveCurrentSession(webView, new Runnable() {
-            @Override
-            public void run() {
-                prefs.edit().putString(KEY_ACTIVE_ACCOUNT_ID, targetId).apply();
-                applyActiveAccountToWebView(webView, callback);
-            }
-        });
-    }
-
     public static String buildRestoreStorageScript(AccountProfile profile) {
+        if (profile == null) return "";
         StringBuilder sb = new StringBuilder();
         sb.append("(function() { try { ");
         sb.append("  localStorage.clear(); sessionStorage.clear(); ");
