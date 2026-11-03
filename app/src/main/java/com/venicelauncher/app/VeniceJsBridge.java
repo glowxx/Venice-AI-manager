@@ -10,6 +10,7 @@ import android.webkit.JavascriptInterface;
 public class VeniceJsBridge {
     private static final String TAG = "VeniceJsBridge";
     public static final String JS_INTERFACE_NAME = "VeniceBridge";
+    public static final String WEB_MESSAGE_PORT_NAME = "__vNativePort";
 
     public interface GenerationStateListener {
         void onGenerationStateChanged(boolean isGenerating);
@@ -80,14 +81,39 @@ public class VeniceJsBridge {
     }
 
     /**
-     * Non-destructive, 100% reliable script injected into Venice.ai.
-     * Accurately tracks generation via Venice's own Stop Button lifecycle and inference POST requests.
-     * NEVER wraps or modifies Response.body to avoid stream locking and state corruption.
+     * Non-destructive, anti-detect compatible generation tracker.
+     * Accurately tracks generation via Venice's Stop Button lifecycle and inference POST requests.
+     * Conceals bridge references and injection flags from global window enumeration.
      */
     public static String getInjectionScript() {
         return "(function() {\n" +
-                "  if (window.__venice_bridge_injected__) return;\n" +
-                "  window.__venice_bridge_injected__ = true;\n" +
+                "  var guard = typeof Symbol === 'function' ? Symbol.for('__v_bridge_guard__') : '__v_bg_guard';\n" +
+                "  if (window[guard]) return;\n" +
+                "  window[guard] = true;\n" +
+                "  \n" +
+                "  var nativePort = window." + WEB_MESSAGE_PORT_NAME + ";\n" +
+                "  var nativeBridge = window." + JS_INTERFACE_NAME + ";\n" +
+                "  \n" +
+                "  // Conceal global bridge references from website scripts\n" +
+                "  try {\n" +
+                "    delete window." + JS_INTERFACE_NAME + ";\n" +
+                "  } catch(e) {}\n" +
+                "  try {\n" +
+                "    Object.defineProperty(window, '" + JS_INTERFACE_NAME + "', {\n" +
+                "      get: function() { return undefined; },\n" +
+                "      set: function() {},\n" +
+                "      configurable: false,\n" +
+                "      enumerable: false\n" +
+                "    });\n" +
+                "  } catch(e) {}\n" +
+                "  try {\n" +
+                "    Object.defineProperty(window, '" + WEB_MESSAGE_PORT_NAME + "', {\n" +
+                "      get: function() { return undefined; },\n" +
+                "      set: function() {},\n" +
+                "      configurable: false,\n" +
+                "      enumerable: false\n" +
+                "    });\n" +
+                "  } catch(e) {}\n" +
                 "  \n" +
                 "  var isCurrentlyGenerating = false;\n" +
                 "  var inferenceActive = false;\n" +
@@ -97,20 +123,21 @@ public class VeniceJsBridge {
                 "    if (isCurrentlyGenerating === generating) return;\n" +
                 "    isCurrentlyGenerating = generating;\n" +
                 "    try {\n" +
-                "      if (window.VeniceBridge) {\n" +
+                "      if (nativePort && typeof nativePort.postMessage === 'function') {\n" +
+                "        nativePort.postMessage(generating ? 'STARTED' : 'COMPLETED');\n" +
+                "      } else if (nativeBridge) {\n" +
                 "        if (generating) {\n" +
-                "          window.VeniceBridge.notifyGenerationStarted();\n" +
+                "          nativeBridge.notifyGenerationStarted();\n" +
                 "        } else {\n" +
-                "          window.VeniceBridge.notifyGenerationCompleted();\n" +
+                "          nativeBridge.notifyGenerationCompleted();\n" +
                 "        }\n" +
                 "      }\n" +
                 "    } catch(e) {\n" +
-                "      console.error('VeniceBridge call error', e);\n" +
+                "      console.error('Bridge call error', e);\n" +
                 "    }\n" +
                 "  }\n" +
                 "  \n" +
                 "  function checkGenerationState() {\n" +
-                "    // 1. Venice chat conditionally renders minds-chat-stop-button ONLY while generating\n" +
                 "    var stopBtn = document.querySelector(\n" +
                 "      'button[data-testid=\"minds-chat-stop-button\"], ' +\n" +
                 "      'button[aria-label*=\"Stop generation\" i], ' +\n" +
@@ -126,7 +153,6 @@ public class VeniceJsBridge {
                 "      }\n" +
                 "    }\n" +
                 "    \n" +
-                "    // If Stop Button disappeared, inference is definitely no longer active\n" +
                 "    if (!hasVisibleStopBtn && inferenceActive) {\n" +
                 "      inferenceActive = false;\n" +
                 "      if (inferenceTimeout) clearTimeout(inferenceTimeout);\n" +
@@ -136,45 +162,37 @@ public class VeniceJsBridge {
                 "    notifyState(isGen);\n" +
                 "  }\n" +
                 "  \n" +
-                "  // 2. Track chat and image inference requests WITHOUT modifying or locking res.body!\n" +
+                "  // Track chat and image inference requests\n" +
                 "  if (window.fetch) {\n" +
                 "    var rawFetch = window.fetch;\n" +
                 "    window.fetch = function() {\n" +
                 "      var url = '';\n" +
                 "      var method = 'GET';\n" +
-                "      \n" +
                 "      if (typeof arguments[0] === 'string') {\n" +
                 "        url = arguments[0];\n" +
                 "      } else if (arguments[0] && arguments[0].url) {\n" +
                 "        url = arguments[0].url;\n" +
                 "      }\n" +
-                "      \n" +
                 "      if (arguments[1] && arguments[1].method) {\n" +
                 "        method = arguments[1].method.toUpperCase();\n" +
                 "      }\n" +
                 "      \n" +
-                "      // Match ONLY actual generation endpoints, never session_ticket or models list\n" +
                 "      var isChatInference = method === 'POST' && (\n" +
                 "        url.indexOf('/api/inference/chat') !== -1 ||\n" +
                 "        url.indexOf('/api/inference/image') !== -1\n" +
                 "      );\n" +
                 "      \n" +
                 "      var p = rawFetch.apply(this, arguments);\n" +
-                "      \n" +
                 "      if (isChatInference) {\n" +
                 "        inferenceActive = true;\n" +
                 "        notifyState(true);\n" +
-                "        \n" +
                 "        if (inferenceTimeout) clearTimeout(inferenceTimeout);\n" +
-                "        // Safety timeout in case stream closes abruptly\n" +
                 "        inferenceTimeout = setTimeout(function() {\n" +
                 "          inferenceActive = false;\n" +
                 "          checkGenerationState();\n" +
                 "        }, 45000);\n" +
-                "        \n" +
                 "        p.then(function(res) {\n" +
                 "          if (!res.ok) {\n" +
-                "            // Request rejected by server (e.g. rate limit, auth)\n" +
                 "            inferenceActive = false;\n" +
                 "            if (inferenceTimeout) clearTimeout(inferenceTimeout);\n" +
                 "            setTimeout(checkGenerationState, 400);\n" +
@@ -185,17 +203,13 @@ public class VeniceJsBridge {
                 "          setTimeout(checkGenerationState, 400);\n" +
                 "        });\n" +
                 "      }\n" +
-                "      \n" +
-                "      // Return original promise directly, ensuring zero interference with React / Vercel AI SDK!\n" +
                 "      return p;\n" +
                 "    };\n" +
                 "  }\n" +
                 "  \n" +
-                "  // 3. MutationObserver on document.body for instant stop-button detection\n" +
                 "  var observer = new MutationObserver(function() {\n" +
                 "    checkGenerationState();\n" +
                 "  });\n" +
-                "  \n" +
                 "  if (document.body) {\n" +
                 "    observer.observe(document.body, { childList: true, subtree: true });\n" +
                 "  } else {\n" +
@@ -204,7 +218,6 @@ public class VeniceJsBridge {
                 "    });\n" +
                 "  }\n" +
                 "  \n" +
-                "  // Fast periodic check every 800ms\n" +
                 "  setInterval(checkGenerationState, 800);\n" +
                 "  checkGenerationState();\n" +
                 "})();";

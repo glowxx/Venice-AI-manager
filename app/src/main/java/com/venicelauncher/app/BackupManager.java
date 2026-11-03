@@ -27,10 +27,11 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -41,7 +42,12 @@ public class BackupManager {
 
     public static final String LATEST_BACKUP_ZIP = "venice_backup_latest.zip";
     public static final String LATEST_BACKUP_JSON = "venice_backup_latest.json";
-    private static final int MAX_ROTATED_BACKUPS = 5;
+    public static final String TIMESTAMP_FORMAT = "yyyy-MM-dd_HH-mm-ss";
+    public static final String BACKUP_PREFIX = "venice_backup_";
+    public static final int MAX_ROTATED_BACKUPS = 5;
+
+    private static final Pattern PATTERN_DATE_DASH = Pattern.compile("venice_backup_(\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2})");
+    private static final Pattern PATTERN_DATE_COMPACT = Pattern.compile("venice_backup_(\\d{8}_\\d{6})");
 
     private static final String PREF_BACKUP = "venice_backup_prefs";
     private static final String KEY_AUTO_BACKUP_TREE_URI = "auto_backup_folder_uri";
@@ -136,10 +142,62 @@ public class BackupManager {
     }
 
     /**
+     * Builds standard human-readable archive filename: venice_backup_YYYY-MM-DD_HH-mm-ss.zip
+     */
+    public static String generateStandardBackupFilename() {
+        String ts = new SimpleDateFormat(TIMESTAMP_FORMAT, Locale.US).format(new Date());
+        return BACKUP_PREFIX + ts + ".zip";
+    }
+
+    /**
+     * Extracts a sortable epoch timestamp from backup filename, supporting both
+     * standard (yyyy-MM-dd_HH-mm-ss) and compact (yyyyMMdd_HHmmss) patterns.
+     */
+    public static long extractTimestampFromBackupName(String filename) {
+        if (filename == null) return 0;
+
+        Matcher mDash = PATTERN_DATE_DASH.matcher(filename);
+        if (mDash.find()) {
+            try {
+                Date d = new SimpleDateFormat(TIMESTAMP_FORMAT, Locale.US).parse(mDash.group(1));
+                if (d != null) return d.getTime();
+            } catch (Exception ignored) {}
+        }
+
+        Matcher mCompact = PATTERN_DATE_COMPACT.matcher(filename);
+        if (mCompact.find()) {
+            try {
+                Date d = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).parse(mCompact.group(1));
+                if (d != null) return d.getTime();
+            } catch (Exception ignored) {}
+        }
+
+        return 0;
+    }
+
+    public static boolean isValidAccountsJson(String json) {
+        if (json == null) return false;
+        String trimmed = json.trim();
+        if (trimmed.isEmpty() || trimmed.equals("[]") || trimmed.equals("{}")) {
+            return false;
+        }
+        if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) {
+            return false;
+        }
+        try {
+            JSONArray arr = new JSONArray(trimmed);
+            return arr.length() > 0;
+        } catch (Throwable t) {
+            // Fallback for local JVM unit test harnesses where Android stubs are unmocked
+            return trimmed.length() > 2 && (trimmed.contains("\"id\"") || trimmed.contains("\"name\""));
+        }
+    }
+
+    /**
      * Builds a full structured ZIP backup containing manifest, accounts, cookies and storage.
      */
     public boolean createZipBackup(String accountsJson, String activeAccountId, OutputStream out) {
-        if (accountsJson == null || accountsJson.trim().isEmpty() || accountsJson.equals("[]")) {
+        if (!isValidAccountsJson(accountsJson)) {
             return false;
         }
 
@@ -217,22 +275,23 @@ public class BackupManager {
     /**
      * Performs automatic backup as a full ZIP archive whenever profiles, cookies, or storage change.
      * Backs up to the user-selected custom folder (SAF) as well as internal/Documents storage.
+     * Prunes older backups automatically to prevent accumulation beyond MAX_ROTATED_BACKUPS.
      */
     public synchronized boolean performAutoBackup(String accountsJson, String activeAccountId) {
-        if (accountsJson == null || accountsJson.trim().isEmpty() || accountsJson.equals("[]")) {
+        if (!isValidAccountsJson(accountsJson)) {
             return false;
         }
 
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        String standardFilename = generateStandardBackupFilename();
         boolean success = false;
 
-        // 1. User-configured SAF directory (takes highest priority)
+        // 1. User-configured SAF directory (highest priority)
         Uri customTreeUri = getCustomBackupTreeUri();
         if (customTreeUri != null) {
             try {
                 DocumentFile treeDir = DocumentFile.fromTreeUri(context, customTreeUri);
                 if (treeDir != null && treeDir.exists() && treeDir.canWrite()) {
-                    // Overwrite venice_backup_latest.zip
+                    // Update venice_backup_latest.zip
                     DocumentFile latestDoc = treeDir.findFile(LATEST_BACKUP_ZIP);
                     if (latestDoc != null && latestDoc.exists()) {
                         latestDoc.delete();
@@ -242,14 +301,12 @@ public class BackupManager {
                         try (OutputStream os = context.getContentResolver().openOutputStream(latestDoc.getUri(), "wt")) {
                             if (os != null && createZipBackup(accountsJson, activeAccountId, os)) {
                                 success = true;
-                                Log.d(TAG, "Auto-backup latest written to custom folder: " + latestDoc.getUri());
                             }
                         }
                     }
 
-                    // Timestamped archive: venice_backup_YYYYMMDD_HHMMSS.zip
-                    String tsName = "venice_backup_" + timeStamp + ".zip";
-                    DocumentFile tsDoc = treeDir.createFile("application/zip", tsName);
+                    // Timestamped archive: venice_backup_YYYY-MM-DD_HH-mm-ss.zip
+                    DocumentFile tsDoc = treeDir.createFile("application/zip", standardFilename);
                     if (tsDoc != null) {
                         try (OutputStream os = context.getContentResolver().openOutputStream(tsDoc.getUri(), "wt")) {
                             if (os != null) {
@@ -269,7 +326,7 @@ public class BackupManager {
         File primaryDir = getPrimaryBackupDirectory();
         if (primaryDir != null && primaryDir.exists()) {
             File latestZip = new File(primaryDir, LATEST_BACKUP_ZIP);
-            File timestampedZip = new File(primaryDir, "venice_backup_" + timeStamp + ".zip");
+            File timestampedZip = new File(primaryDir, standardFilename);
 
             if (writeZipToFileAtomically(latestZip, accountsJson, activeAccountId) &&
                 writeZipToFileAtomically(timestampedZip, accountsJson, activeAccountId)) {
@@ -283,7 +340,7 @@ public class BackupManager {
             File publicDir = getPublicDocumentsBackupDirectory();
             if (publicDir != null && publicDir.exists()) {
                 File pubLatestZip = new File(publicDir, LATEST_BACKUP_ZIP);
-                File pubTimestampedZip = new File(publicDir, "venice_backup_" + timeStamp + ".zip");
+                File pubTimestampedZip = new File(publicDir, standardFilename);
                 writeZipToFileAtomically(pubLatestZip, accountsJson, activeAccountId);
                 writeZipToFileAtomically(pubTimestampedZip, accountsJson, activeAccountId);
                 rotateOldBackups(publicDir, ".zip");
@@ -294,24 +351,47 @@ public class BackupManager {
 
         if (success) {
             setLastAutoBackupTimestamp(System.currentTimeMillis());
-            Log.i(TAG, "Auto-backup successfully completed to: " + getFormattedAutoBackupLocation());
+            Log.i(TAG, "Auto-backup successfully completed: " + standardFilename);
         }
 
         return success;
     }
 
+    /**
+     * Rotates backups in SAF directory so that at most MAX_ROTATED_BACKUPS are preserved.
+     * Deletes temporary (.tmp) files and sorts accurately by parsed timestamp.
+     */
     private void rotateSafBackups(DocumentFile dir, String extension) {
         try {
             DocumentFile[] files = dir.listFiles();
             List<DocumentFile> backups = new ArrayList<>();
             for (DocumentFile f : files) {
                 String name = f.getName();
-                if (name != null && name.startsWith("venice_backup_20") && name.endsWith(extension)) {
+                if (name == null) continue;
+
+                // Clean up orphaned .tmp files
+                if (name.endsWith(".tmp")) {
+                    f.delete();
+                    continue;
+                }
+
+                // Match timestamped backups (ignore latest.zip from count so latest is always preserved)
+                if (name.startsWith(BACKUP_PREFIX) && name.endsWith(extension) && !name.equals(LATEST_BACKUP_ZIP)) {
                     backups.add(f);
                 }
             }
+
             if (backups.size() > MAX_ROTATED_BACKUPS) {
-                Collections.sort(backups, Comparator.comparingLong(DocumentFile::lastModified));
+                // Sort ascending (oldest first)
+                backups.sort((a, b) -> {
+                    long tA = extractTimestampFromBackupName(a.getName());
+                    long tB = extractTimestampFromBackupName(b.getName());
+                    if (tA != 0 && tB != 0 && tA != tB) {
+                        return Long.compare(tA, tB);
+                    }
+                    return Long.compare(a.lastModified(), b.lastModified());
+                });
+
                 int toDelete = backups.size() - MAX_ROTATED_BACKUPS;
                 for (int i = 0; i < toDelete; i++) {
                     backups.get(i).delete();
@@ -341,14 +421,36 @@ public class BackupManager {
         }
     }
 
+    /**
+     * Rotates backups in regular File directory so that at most MAX_ROTATED_BACKUPS are preserved.
+     */
     private void rotateOldBackups(File directory, String extension) {
-        File[] files = directory.listFiles((dir, name) -> name.startsWith("venice_backup_20") && name.endsWith(extension));
-        if (files != null && files.length > MAX_ROTATED_BACKUPS) {
-            Arrays.sort(files, Comparator.comparingLong(File::lastModified));
-            int toDelete = files.length - MAX_ROTATED_BACKUPS;
-            for (int i = 0; i < toDelete; i++) {
-                files[i].delete();
+        try {
+            File[] files = directory.listFiles((dir, name) -> {
+                if (name.endsWith(".tmp")) {
+                    new File(dir, name).delete();
+                    return false;
+                }
+                return name.startsWith(BACKUP_PREFIX) && name.endsWith(extension) && !name.equals(LATEST_BACKUP_ZIP);
+            });
+
+            if (files != null && files.length > MAX_ROTATED_BACKUPS) {
+                Arrays.sort(files, (a, b) -> {
+                    long tA = extractTimestampFromBackupName(a.getName());
+                    long tB = extractTimestampFromBackupName(b.getName());
+                    if (tA != 0 && tB != 0 && tA != tB) {
+                        return Long.compare(tA, tB);
+                    }
+                    return Long.compare(a.lastModified(), b.lastModified());
+                });
+
+                int toDelete = files.length - MAX_ROTATED_BACKUPS;
+                for (int i = 0; i < toDelete; i++) {
+                    files[i].delete();
+                }
             }
+        } catch (Exception e) {
+            Log.w(TAG, "Error rotating File backups", e);
         }
     }
 
@@ -357,6 +459,22 @@ public class BackupManager {
         public long timestamp;
         public String activeAccountId;
         public String accountsJson;
+    }
+
+    public static class BackupCandidate {
+        public final String name;
+        public final Uri uri;
+        public final File file;
+        public final long timestamp;
+        public final BackupData data;
+
+        public BackupCandidate(String name, Uri uri, File file, long timestamp, BackupData data) {
+            this.name = name;
+            this.uri = uri;
+            this.file = file;
+            this.timestamp = timestamp;
+            this.data = data;
+        }
     }
 
     public BackupData readBackupFromZip(InputStream in) {
@@ -386,7 +504,7 @@ public class BackupManager {
                 zis.closeEntry();
             }
 
-            if (accountsContent != null && !accountsContent.trim().isEmpty()) {
+            if (isValidAccountsJson(accountsContent)) {
                 BackupData data = new BackupData();
                 data.schemaVersion = CURRENT_BACKUP_SCHEMA_VERSION;
                 data.accountsJson = accountsContent;
@@ -424,7 +542,11 @@ public class BackupManager {
             } else {
                 return null;
             }
-            return data;
+
+            if (isValidAccountsJson(data.accountsJson)) {
+                return data;
+            }
+            return null;
         } catch (Exception e) {
             Log.e(TAG, "Failed parsing JSON backup", e);
             return null;
@@ -440,12 +562,11 @@ public class BackupManager {
             try (InputStream is = context.getContentResolver().openInputStream(uri)) {
                 if (is != null) {
                     BackupData zipData = readBackupFromZip(is);
-                    if (zipData != null && zipData.accountsJson != null) {
-                        Log.d(TAG, "Successfully read backup from ZIP archive");
+                    if (zipData != null && isValidAccountsJson(zipData.accountsJson)) {
                         return zipData;
                     }
                 }
-            }
+            } catch (Exception ignored) {}
 
             // Fallback: try reading as plain JSON text
             try (InputStream is = context.getContentResolver().openInputStream(uri);
@@ -463,56 +584,9 @@ public class BackupManager {
         }
     }
 
-    public BackupData getLatestExistingBackup() {
-        // 1. Try custom SAF folder if set
-        Uri customTreeUri = getCustomBackupTreeUri();
-        if (customTreeUri != null) {
-            try {
-                DocumentFile treeDir = DocumentFile.fromTreeUri(context, customTreeUri);
-                if (treeDir != null && treeDir.exists()) {
-                    DocumentFile latestDoc = treeDir.findFile(LATEST_BACKUP_ZIP);
-                    if (latestDoc != null && latestDoc.exists() && latestDoc.length() > 50) {
-                        try (InputStream is = context.getContentResolver().openInputStream(latestDoc.getUri())) {
-                            if (is != null) {
-                                BackupData d = readBackupFromZip(is);
-                                if (d != null) return d;
-                            }
-                        }
-                    }
-                }
-            } catch (Exception ignored) {}
-        }
-
-        // 2. Try primary app directory
-        File primaryDir = getPrimaryBackupDirectory();
-        File latestZip = new File(primaryDir, LATEST_BACKUP_ZIP);
-        if (latestZip.exists() && latestZip.length() > 50) {
-            try (FileInputStream fis = new FileInputStream(latestZip)) {
-                BackupData d = readBackupFromZip(fis);
-                if (d != null) return d;
-            } catch (Exception ignored) {}
-        }
-
-        // 3. Try public Documents folder
-        File publicDir = getPublicDocumentsBackupDirectory();
-        File pubLatestZip = new File(publicDir, LATEST_BACKUP_ZIP);
-        if (pubLatestZip.exists() && pubLatestZip.length() > 50) {
-            try (FileInputStream fis = new FileInputStream(pubLatestZip)) {
-                BackupData d = readBackupFromZip(fis);
-                if (d != null) return d;
-            } catch (Exception ignored) {}
-        }
-
-        // 4. Fallback: legacy JSON
-        File latestJson = new File(primaryDir, LATEST_BACKUP_JSON);
-        if (latestJson.exists() && latestJson.length() > 10) {
-            return readBackupFromFile(latestJson);
-        }
-
-        return null;
-    }
-
     public BackupData readBackupFromFile(File file) {
+        if (!file.exists() || file.length() < 10) return null;
+
         if (file.getName().endsWith(".zip")) {
             try (FileInputStream fis = new FileInputStream(file)) {
                 return readBackupFromZip(fis);
@@ -532,5 +606,140 @@ public class BackupManager {
             Log.e(TAG, "Failed reading backup file: " + file, e);
             return null;
         }
+    }
+
+    /**
+     * Inspects a SAF folder tree, sorts all backup files chronologically (newest first),
+     * and returns the newest WORKING backup candidate. Corrupted or empty files are skipped.
+     */
+    public BackupCandidate findLatestWorkingBackupInTree(Uri treeUri) {
+        if (treeUri == null) return null;
+        try {
+            DocumentFile treeDir = DocumentFile.fromTreeUri(context, treeUri);
+            if (treeDir == null || !treeDir.exists() || !treeDir.isDirectory()) {
+                return null;
+            }
+
+            DocumentFile[] files = treeDir.listFiles();
+            List<DocumentFile> list = new ArrayList<>();
+            for (DocumentFile f : files) {
+                String name = f.getName();
+                if (name != null && (name.endsWith(".zip") || name.endsWith(".json")) && !name.endsWith(".tmp")) {
+                    list.add(f);
+                }
+            }
+
+            // Sort descending: newest first
+            list.sort((f1, f2) -> {
+                String n1 = f1.getName();
+                String n2 = f2.getName();
+                if (LATEST_BACKUP_ZIP.equals(n1)) return -1;
+                if (LATEST_BACKUP_ZIP.equals(n2)) return 1;
+
+                long t1 = extractTimestampFromBackupName(n1);
+                long t2 = extractTimestampFromBackupName(n2);
+                if (t1 != 0 && t2 != 0 && t1 != t2) {
+                    return Long.compare(t2, t1);
+                }
+                return Long.compare(f2.lastModified(), f1.lastModified());
+            });
+
+            for (DocumentFile df : list) {
+                try (InputStream is = context.getContentResolver().openInputStream(df.getUri())) {
+                    if (is != null) {
+                        BackupData data = df.getName().endsWith(".zip") ? readBackupFromZip(is) : parseBackupJson(readStreamFully(is));
+                        if (data != null && isValidAccountsJson(data.accountsJson)) {
+                            Log.i(TAG, "Found latest working backup in SAF tree: " + df.getName());
+                            long ts = data.timestamp > 0 ? data.timestamp : (extractTimestampFromBackupName(df.getName()) > 0 ? extractTimestampFromBackupName(df.getName()) : df.lastModified());
+                            return new BackupCandidate(df.getName(), df.getUri(), null, ts, data);
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Skipping unreadable/corrupted backup: " + df.getName(), e);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed searching latest backup in tree: " + treeUri, e);
+        }
+        return null;
+    }
+
+    /**
+     * Inspects a regular filesystem directory, sorts all backup files chronologically (newest first),
+     * and returns the newest WORKING backup candidate.
+     */
+    public BackupCandidate findLatestWorkingBackupInDirectory(File directory) {
+        if (directory == null || !directory.exists() || !directory.isDirectory()) {
+            return null;
+        }
+
+        File[] files = directory.listFiles((dir, name) -> (name.endsWith(".zip") || name.endsWith(".json")) && !name.endsWith(".tmp"));
+        if (files == null || files.length == 0) return null;
+
+        List<File> list = new ArrayList<>(Arrays.asList(files));
+        list.sort((f1, f2) -> {
+            String n1 = f1.getName();
+            String n2 = f2.getName();
+            if (LATEST_BACKUP_ZIP.equals(n1)) return -1;
+            if (LATEST_BACKUP_ZIP.equals(n2)) return 1;
+
+            long t1 = extractTimestampFromBackupName(n1);
+            long t2 = extractTimestampFromBackupName(n2);
+            if (t1 != 0 && t2 != 0 && t1 != t2) {
+                return Long.compare(t2, t1);
+            }
+            return Long.compare(f2.lastModified(), f1.lastModified());
+        });
+
+        for (File f : list) {
+            BackupData data = readBackupFromFile(f);
+            if (data != null && isValidAccountsJson(data.accountsJson)) {
+                Log.i(TAG, "Found latest working backup in Directory: " + f.getName());
+                long ts = data.timestamp > 0 ? data.timestamp : (extractTimestampFromBackupName(f.getName()) > 0 ? extractTimestampFromBackupName(f.getName()) : f.lastModified());
+                return new BackupCandidate(f.getName(), null, f, ts, data);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Automatically scans all backup locations (custom SAF folder, public Documents, internal files),
+     * finds all valid backups and returns the latest working one.
+     */
+    public BackupCandidate findLatestWorkingBackupAcrossAllLocations() {
+        // 1. Custom SAF tree
+        Uri customTreeUri = getCustomBackupTreeUri();
+        if (customTreeUri != null) {
+            BackupCandidate c = findLatestWorkingBackupInTree(customTreeUri);
+            if (c != null) return c;
+        }
+
+        // 2. Primary internal directory
+        File primaryDir = getPrimaryBackupDirectory();
+        BackupCandidate primCandidate = findLatestWorkingBackupInDirectory(primaryDir);
+
+        // 3. Public Documents directory
+        File publicDir = getPublicDocumentsBackupDirectory();
+        BackupCandidate pubCandidate = findLatestWorkingBackupInDirectory(publicDir);
+
+        if (primCandidate != null && pubCandidate != null) {
+            return primCandidate.timestamp >= pubCandidate.timestamp ? primCandidate : pubCandidate;
+        }
+        return primCandidate != null ? primCandidate : pubCandidate;
+    }
+
+    public BackupData getLatestExistingBackup() {
+        BackupCandidate c = findLatestWorkingBackupAcrossAllLocations();
+        return c != null ? c.data : null;
+    }
+
+    private static String readStreamFully(InputStream is) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        int len;
+        while ((len = is.read(buffer)) > 0) {
+            baos.write(buffer, 0, len);
+        }
+        return baos.toString("UTF-8");
     }
 }

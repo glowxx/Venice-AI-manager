@@ -65,9 +65,12 @@ import com.google.android.material.materialswitch.MaterialSwitch;
 
 import java.io.OutputStream;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "VeniceMainActivity";
@@ -89,6 +92,7 @@ public class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<String> exportBackupLauncher;
     private ActivityResultLauncher<String[]> importBackupLauncher;
     private ActivityResultLauncher<Uri> chooseBackupFolderLauncher;
+    private ActivityResultLauncher<Uri> chooseRestoreFolderLauncher;
     private BottomSheetDialog activeSettingsDialog;
 
     private boolean isGenerating = false;
@@ -264,6 +268,23 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
         );
+
+        // Choose folder to automatically find and restore the newest working backup
+        chooseRestoreFolderLauncher = registerForActivityResult(
+                new ActivityResultContracts.OpenDocumentTree(),
+                new ActivityResultCallback<Uri>() {
+                    @Override
+                    public void onActivityResult(Uri treeUri) {
+                        if (treeUri != null) {
+                            try {
+                                final int takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION;
+                                getContentResolver().takePersistableUriPermission(treeUri, takeFlags);
+                            } catch (Exception ignored) {}
+                            restoreFromFolderUri(treeUri);
+                        }
+                    }
+                }
+        );
     }
 
     private void setupFloatingMenu() {
@@ -365,17 +386,41 @@ public class MainActivity extends AppCompatActivity {
         ws.setCacheMode(WebSettings.LOAD_DEFAULT);
         ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
 
-        // Modern Mobile Chrome user agent
-        String customUA = ws.getUserAgentString() + " VeniceLauncher/1.0.7 Mobile";
-        ws.setUserAgentString(customUA);
+        AccountManager.AccountProfile profileObj = accountManager.getActiveAccount();
+        final boolean isIncognito = profileObj != null && profileObj.isIncognito;
+
+        // Apply full Anti-Detect protections (clean Chrome UA, suppress X-Requested-With, canvas/webgl/audio noise)
+        AntiDetectManager.applyAntiDetect(wv, accountId, isIncognito);
 
         // Enable cookies for profile
         CookieManager cm = accountManager.getCookieManagerForProfile(accountId);
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(wv, true);
 
-        // Add JavaScript bridge for generation state detection
-        wv.addJavascriptInterface(veniceJsBridge, VeniceJsBridge.JS_INTERFACE_NAME);
+        // Add WebMessage listener / JavaScript bridge for generation state detection
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            try {
+                WebViewCompat.addWebMessageListener(
+                        wv,
+                        VeniceJsBridge.WEB_MESSAGE_PORT_NAME,
+                        Collections.singleton("https://venice.ai"),
+                        (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
+                            String data = message.getData();
+                            if ("STARTED".equals(data)) {
+                                veniceJsBridge.notifyGenerationStarted();
+                            } else if ("COMPLETED".equals(data)) {
+                                veniceJsBridge.notifyGenerationCompleted();
+                            }
+                        }
+                );
+            } catch (Exception e) {
+                Log.w(TAG, "Failed adding WebMessageListener, fallback to interface", e);
+                wv.addJavascriptInterface(veniceJsBridge, VeniceJsBridge.JS_INTERFACE_NAME);
+            }
+        } else {
+            wv.addJavascriptInterface(veniceJsBridge, VeniceJsBridge.JS_INTERFACE_NAME);
+        }
+
         veniceJsBridge.setStateListener(new VeniceJsBridge.GenerationStateListener() {
             @Override
             public void onGenerationStateChanged(final boolean generating) {
@@ -417,6 +462,8 @@ public class MainActivity extends AppCompatActivity {
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
                 progressBar.setVisibility(View.VISIBLE);
+                int seed = AntiDetectManager.getProfileSeed(accountId, isIncognito);
+                view.evaluateJavascript(AntiDetectManager.buildAntiDetectScript(seed), null);
             }
 
             @Override
@@ -425,8 +472,10 @@ public class MainActivity extends AppCompatActivity {
                 progressBar.setVisibility(View.GONE);
                 swipeRefreshLayout.setRefreshing(false);
 
-                // Inject background generation detector
-                wv.evaluateJavascript(VeniceJsBridge.getInjectionScript(), null);
+                // Inject anti-detect and background generation detector
+                int seed = AntiDetectManager.getProfileSeed(accountId, isIncognito);
+                view.evaluateJavascript(AntiDetectManager.buildAntiDetectScript(seed), null);
+                view.evaluateJavascript(VeniceJsBridge.getInjectionScript(), null);
 
                 // Flush active cookies and snapshot them to active profile
                 CookieManager profileCm = accountManager.getCookieManagerForProfile(accountId);
@@ -446,6 +495,8 @@ public class MainActivity extends AppCompatActivity {
                     progressBar.setVisibility(View.GONE);
                 }
                 if (newProgress >= 70) {
+                    int seed = AntiDetectManager.getProfileSeed(accountId, isIncognito);
+                    view.evaluateJavascript(AntiDetectManager.buildAntiDetectScript(seed), null);
                     view.evaluateJavascript(VeniceJsBridge.getInjectionScript(), null);
                 }
             }
@@ -729,25 +780,17 @@ public class MainActivity extends AppCompatActivity {
                                 accountManager.getAccountsJson(),
                                 accountManager.getActiveAccount().id
                         );
-                        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-                        exportBackupLauncher.launch("venice_backup_" + timeStamp + ".zip");
+                        exportBackupLauncher.launch(BackupManager.generateStandardBackupFilename());
                     }
                 });
             });
         }
 
-        // Restore Backup Button (supports .zip and legacy .json)
+        // Restore Backup Button (supports folder auto-detection, .zip, and legacy .json)
         View btnRestore = dialogView.findViewById(R.id.btn_restore_backup);
         if (btnRestore != null) {
             btnRestore.setOnClickListener(v -> {
-                dialog.dismiss();
-                importBackupLauncher.launch(new String[]{
-                        "application/zip",
-                        "application/x-zip-compressed",
-                        "application/octet-stream",
-                        "application/json",
-                        "*/*"
-                });
+                showRestoreOptionsDialog(dialog);
             });
         }
 
@@ -1006,6 +1049,86 @@ public class MainActivity extends AppCompatActivity {
             webView = null;
         }
         super.onDestroy();
+    }
+
+    private void showRestoreOptionsDialog(final BottomSheetDialog parentDialog) {
+        final Uri currentCustomUri = accountManager.getBackupManager().getCustomBackupTreeUri();
+        final String currentLoc = accountManager.getBackupManager().getFormattedAutoBackupLocation();
+
+        List<String> options = new ArrayList<>();
+        final List<Runnable> actions = new ArrayList<>();
+
+        // Option 1: Select backup folder (auto-detects latest)
+        options.add(getString(R.string.restore_option_folder));
+        actions.add(() -> {
+            if (parentDialog != null) parentDialog.dismiss();
+            chooseRestoreFolderLauncher.launch(null);
+        });
+
+        // Option 2: Restore from configured location
+        options.add(String.format(getString(R.string.restore_option_current_folder), currentLoc));
+        actions.add(() -> {
+            if (parentDialog != null) parentDialog.dismiss();
+            restoreFromCurrentFolder();
+        });
+
+        // Option 3: Pick specific .zip file
+        options.add(getString(R.string.restore_option_file));
+        actions.add(() -> {
+            if (parentDialog != null) parentDialog.dismiss();
+            importBackupLauncher.launch(new String[]{
+                    "application/zip",
+                    "application/x-zip-compressed",
+                    "application/octet-stream",
+                    "application/json",
+                    "*/*"
+            });
+        });
+
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.restore_dialog_title)
+                .setMessage(R.string.restore_dialog_desc)
+                .setItems(options.toArray(new CharSequence[0]), (dialog, which) -> {
+                    if (which >= 0 && which < actions.size()) {
+                        actions.get(which).run();
+                    }
+                })
+                .setNegativeButton(R.string.btn_cancel, null)
+                .show();
+    }
+
+    private void restoreFromFolderUri(final Uri treeUri) {
+        Toast.makeText(this, R.string.toast_restore_folder_scanning, Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            final BackupManager.BackupCandidate candidate = accountManager.getBackupManager().findLatestWorkingBackupInTree(treeUri);
+            runOnUiThread(() -> {
+                if (candidate != null && candidate.data != null && accountManager.restoreFromBackup(candidate.data)) {
+                    int count = accountManager.getAccounts().size();
+                    String msg = String.format(getString(R.string.toast_restore_success_details), candidate.name, count);
+                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
+                    switchAccountAndRecreateWebView(accountManager.getActiveAccount().id, null);
+                } else {
+                    Toast.makeText(MainActivity.this, R.string.toast_restore_folder_none, Toast.LENGTH_LONG).show();
+                }
+            });
+        }).start();
+    }
+
+    private void restoreFromCurrentFolder() {
+        Toast.makeText(this, R.string.toast_restore_folder_scanning, Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            final BackupManager.BackupCandidate candidate = accountManager.getBackupManager().findLatestWorkingBackupAcrossAllLocations();
+            runOnUiThread(() -> {
+                if (candidate != null && candidate.data != null && accountManager.restoreFromBackup(candidate.data)) {
+                    int count = accountManager.getAccounts().size();
+                    String msg = String.format(getString(R.string.toast_restore_success_details), candidate.name, count);
+                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
+                    switchAccountAndRecreateWebView(accountManager.getActiveAccount().id, null);
+                } else {
+                    Toast.makeText(MainActivity.this, R.string.toast_restore_folder_none, Toast.LENGTH_LONG).show();
+                }
+            });
+        }).start();
     }
 
     @Override

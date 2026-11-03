@@ -67,12 +67,21 @@
     <string name="backup_last_time_prefix">Last auto-backup: </string>
     <string name="backup_last_time_none">Pending initial sync</string>
     <string name="btn_export_backup">Export Backup (.zip)</string>
-    <string name="btn_restore_backup">Restore from File (.zip)</string>
+    <string name="btn_restore_backup">Restore / Import Backup</string>
+    <string name="restore_dialog_title">Restore Backup</string>
+    <string name="restore_dialog_desc">Select a backup folder or choose an archive file. Venice Launcher automatically identifies and restores the newest working backup.</string>
+    <string name="restore_option_folder">Select Backup Folder</string>
+    <string name="restore_option_folder_desc">Pick a folder to automatically find and restore the latest working archive</string>
+    <string name="restore_option_current_folder">Restore Latest from: %s</string>
+    <string name="restore_option_file">Select Specific .zip File</string>
+    <string name="toast_restore_folder_scanning">Scanning folder for the newest working backup...</string>
+    <string name="toast_restore_folder_none">No working backup archives found in the chosen folder</string>
+    <string name="toast_restore_success_details">Restored latest working backup: %1$s (%2$d accounts)</string>
     
     <string name="setting_clear_cache">Clear Web Cache</string>
     <string name="setting_reload_page">Reload Venice Page</string>
     <string name="cache_cleared">Web cache and session cache cleared</string>
-    <string name="app_footer_info">Venice AI Launcher v1.0.7</string>
+    <string name="app_footer_info">Venice AI Launcher v1.0.8</string>
     <string name="venice_footer_tagline">Venice AI · Private, Uncensored &amp; Unbiased</string>
     
     <!-- Status & Toasts -->
